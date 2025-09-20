@@ -91,7 +91,7 @@ class PlayerStateManager {
         });
 
         // Idle event
-        player.on(AudioPlayerStatus.Idle, () => {
+        player.on(AudioPlayerStatus.Idle, async () => {
             this.updateState(guildId, {
                 discordStatus: 'idle',
                 isPlaying: false,
@@ -104,6 +104,14 @@ class PlayerStateManager {
                 lastActivity: Date.now()
             });
             console.log(`[PlayerStateManager] ⏹️ IDLE: Guild ${guildId}`);
+            
+            // NOTIFY QUEUE MANAGER: Let QueueManager handle auto-advance
+            try {
+                const { queueManager } = await import('../services/queue-manager.js');
+                await queueManager.handleAutoAdvance(guildId);
+            } catch (error) {
+                console.error(`[PlayerStateManager] ❌ Auto-advance error:`, error.message);
+            }
         });
 
         // Buffering event
@@ -203,6 +211,12 @@ class PlayerStateManager {
             console.log(`[PlayerStateManager] 🔄 Notifying StateCoordinator: ${stateType} for guild ${guildId}`, updates);
             
             if (stateType !== 'unknown') {
+                // If going to idle state, unlock first to allow the transition
+                if (stateType === 'idle') {
+                    const { StateLockManager } = await import('../../services/state-lock-manager.js');
+                    StateLockManager.unlockState(guildId);
+                }
+                
                 await StateCoordinator.notifyStateChange(guildId, stateType, updates);
             }
         } catch (error) {
@@ -344,6 +358,14 @@ class PlayerStateManager {
     isStarting(guildId) {
         const state = this.getState(guildId);
         return state ? state.isStarting : false;
+    }
+
+    /**
+     * Check if guild is buffering
+     */
+    isBuffering(guildId) {
+        const state = this.getState(guildId);
+        return state ? state.isBuffering : false;
     }
 
     /**

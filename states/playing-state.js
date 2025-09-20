@@ -42,8 +42,7 @@ export class PlayingState extends BaseState {
     getDurationDisplay(song, currentTime) {
         if (!song) return '⏸ `Unknown`';
         
-        // Check both possible duration locations
-        const duration = song.streamDetails?.metadata?.duration || song.duration;
+        const duration = song.streamDetails?.metadata?.duration;
         const statusEmoji = '⏸'; // Pause icon for playing state
         
         if (duration && currentTime > 0) {
@@ -68,14 +67,8 @@ export class PlayingState extends BaseState {
     formatDuration(seconds) {
         if (!seconds || seconds <= 0) return 'Unknown';
         
-        // Convert to seconds if it's in milliseconds (duration > 10000 suggests milliseconds)
-        let durationInSeconds = seconds;
-        if (seconds > 10000) {
-            durationInSeconds = Math.floor(seconds / 1000);
-        }
-        
-        const minutes = Math.floor(durationInSeconds / 60);
-        const remainingSeconds = durationInSeconds % 60;
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
         
         if (minutes === 0) {
             return `${remainingSeconds}s`;
@@ -85,4 +78,5 @@ export class PlayingState extends BaseState {
             return `${minutes}m ${remainingSeconds}s`;
         }
     }
+
 }

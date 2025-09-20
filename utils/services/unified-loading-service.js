@@ -157,12 +157,12 @@ class UnifiedLoadingService {
         
         try {
             // Set the session state so playback controls system shows yellow loading automatically
-            const { guildAudioSessions } = await import('../utils/core/audio-state.js');
+            const { guildAudioSessions } = await import('../../utils/core/audio-state.js');
             const session = guildAudioSessions.get(guildId);
             
             if (session) {
                 // Set loading state - this will make playback controls show yellow loading
-                const { playerStateManager } = await import('../utils/core/player-state-manager.js');
+                const { playerStateManager } = await import('../../utils/core/player-state-manager.js');
                 playerStateManager.setLoading(guildId, true);
                 session.lastStartingTime = Date.now();
                 
@@ -180,10 +180,9 @@ class UnifiedLoadingService {
                 
                 // Trigger playback controls update to show yellow loading immediately
                 try {
-                    const { updatePlaybackControlsEmbed } = await import('../message/update-handlers.js');
-                    const { client } = await import('../bot.js');
+                    const { updatePlaybackControlsEmbed } = await import('../../message/update-handlers.js');
+                    const { client } = await import('../../bot.js');
                     await updatePlaybackControlsEmbed(guildId, client, session);
-                    console.log(`[UnifiedLoading] ✅ Playback controls updated to show yellow loading for guild ${guildId}`);
                 } catch (updateError) {
                     console.log(`[UnifiedLoading] Playback controls update error:`, updateError.message);
                 }
@@ -217,11 +216,11 @@ class UnifiedLoadingService {
         
         // Set loading to false and trigger playing state
         try {
-            const { playerStateManager } = await import('../utils/core/player-state-manager.js');
+            const { playerStateManager } = await import('../../utils/core/player-state-manager.js');
             playerStateManager.setLoading(guildId, false);
             
             // Trigger playing state change
-            const { StateCoordinator } = await import('../services/state-coordinator.js');
+            const { StateCoordinator } = await import('../../services/state-coordinator.js');
             await StateCoordinator.setPlayingState(guildId, true, songMetadata);
             
             console.log(`[UnifiedLoading] ✅ Loading completed and playing state triggered for guild ${guildId}`);
@@ -268,8 +267,8 @@ class UnifiedLoadingService {
         
         try {
             // DIRECT APPROACH: Update the playback controls message directly with blue loading
-            const { MessageReferenceManager, MESSAGE_TYPES } = await import('../message/reference-managers.js');
-            const { client } = await import('../bot.js');
+            const { MessageReferenceManager, MESSAGE_TYPES } = await import('../../message/reference-managers.js');
+            const { client } = await import('../../bot.js');
             
             // Get the stored playback controls message reference
             const messageRef = await MessageReferenceManager.getMessageRef(guildId, MESSAGE_TYPES.PLAYBACK_CONTROLS);
@@ -379,7 +378,7 @@ class UnifiedLoadingService {
         // FIRST: Check if we have a stored message reference for this guild
         if (guildId) {
             try {
-                const { MessageReferenceManager, MESSAGE_TYPES } = await import('../message/reference-managers.js');
+                const { MessageReferenceManager, MESSAGE_TYPES } = await import('../../message/reference-managers.js');
                 const messageRef = MessageReferenceManager.getMessageRef(guildId, MESSAGE_TYPES.LOADING_MESSAGE);
                 
                 if (messageRef?.messageId && messageRef?.channelId) {
@@ -406,8 +405,8 @@ class UnifiedLoadingService {
             
             // For queue progression, update the playback controls embed instead
             try {
-                const { updatePlaybackControlsEmbed } = await import('../message/update-handlers.js');
-                const { guildAudioSessions } = await import('../utils/core/audio-state.js');
+                const { updatePlaybackControlsEmbed } = await import('../../message/update-handlers.js');
+                const { guildAudioSessions } = await import('../../utils/core/audio-state.js');
                 const session = guildAudioSessions.get(guildId);
                 
                 if (session) {
@@ -431,7 +430,7 @@ class UnifiedLoadingService {
                         });
                         
                         // Send initial playback controls message if none exists, then update it
-                        const { MessageReferenceManager, MESSAGE_TYPES } = await import('../message/reference-managers.js');
+                        const { MessageReferenceManager, MESSAGE_TYPES } = await import('../../message/reference-managers.js');
                         let messageRef = MessageReferenceManager.getMessageRef(guildId, MESSAGE_TYPES.PLAYBACK_CONTROLS);
                         
                         if (!messageRef) {
@@ -439,26 +438,20 @@ class UnifiedLoadingService {
                             
                             // Get the channel where the bot is connected
                             const channelId = session.connection.joinConfig.channelId;
-                            const { client } = await import('../bot.js');
+                            const { client } = await import('../../bot.js');
                             const guild = await client.guilds.fetch(guildId);
                             const textChannel = await guild.channels.fetch(channelId);
                             
-                            // Generate playback controls embed
-                            const { playbackcontrols } = await import('../ui/components/playback-controls.js');
-                            const playbackData = await playbackcontrols(guildId, client);
-                            
-                            // Send the message
-                            const message = await textChannel.send(playbackData);
-                            
-                            // Store the message reference in the session
-                            MessageReferenceManager.storeMessageRef(guildId, MESSAGE_TYPES.PLAYBACK_CONTROLS, message.id, message.channel.id);
+                            // Use new message system
+                            const { updatePlaybackControlsEmbed } = await import('../../message/update-handlers.js');
+                            await updatePlaybackControlsEmbed(guildId, client);
                             
                             console.log(`[UnifiedLoading] ✅ Sent and stored initial playback controls message for guild ${guildId}`);
                         }
                         
                         // Now update the message with loading state
                         console.log(`[UnifiedLoading] 🔍 Calling updatePlaybackControlsEmbed...`);
-                        const { client } = await import('../bot.js');
+                        const { client } = await import('../../bot.js');
                         await updatePlaybackControlsEmbed(guildId, client, session);
                         console.log(`[UnifiedLoading] ✅ Updated playback controls for queue progression`);
                         return { success: true };
@@ -502,7 +495,7 @@ class UnifiedLoadingService {
             // Store the message reference using MessageReferenceManager for future updates
             if (guildId) {
                 try {
-                    const { MessageReferenceManager, MESSAGE_TYPES } = await import('../message/reference-managers.js');
+                    const { MessageReferenceManager, MESSAGE_TYPES } = await import('../../message/reference-managers.js');
                     MessageReferenceManager.storeMessageRef(guildId, MESSAGE_TYPES.LOADING_MESSAGE, result.id, result.channel_id);
                     console.log(`[UnifiedLoading] Stored loading message reference: ${result.id}`);
                 } catch (dbError) {

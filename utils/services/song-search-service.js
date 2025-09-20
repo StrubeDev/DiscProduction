@@ -79,7 +79,7 @@ export function createSongObject(trackInfo, youtubeUrl, searchQuery, interaction
         addedBy: interactionDetails?.user?.username || 'Unknown User',
         addedById: interactionDetails?.user?.id || 'unknown',
         addedByAvatar: interactionDetails?.user?.avatar || null,
-        thumbnailUrl: trackInfo.thumbnailUrl || null,
+        imageUrl: trackInfo.imageUrl || null,
         
         // Store original data for reference
         originalQuery: originalQuery,

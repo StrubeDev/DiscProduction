@@ -31,7 +31,35 @@ class QueueManager {
         
         // Check if we should start playback (no song currently playing)
         const isDiscordIdle = session?.player?.state?.status === 'idle';
-        const shouldStartPlayback = startPlayback && !session.nowPlaying && (!session.isPlaying || isDiscordIdle);
+        const isPlayerPlaying = session?.player?.state?.status === 'playing';
+        const isPlayerPaused = session?.player?.state?.status === 'paused';
+        
+        // CRITICAL: Check StateCoordinator for querying/loading states
+        const { StateCoordinator } = await import('../../services/state-coordinator.js');
+        const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+        const isQuerying = trackedState?.currentState === 'querying';
+        const isLoading = trackedState?.currentState === 'loading';
+        
+        console.log(`[QueueManager] Player state: ${session?.player?.state?.status}, nowPlaying: ${!!session.nowPlaying}, isPlaying: ${session.isPlaying}`);
+        console.log(`[QueueManager] StateCoordinator state: ${trackedState?.currentState}, isQuerying: ${isQuerying}, isLoading: ${isLoading}`);
+        
+        // Check if Discord player is actually playing
+        const isDiscordPlaying = session.player.state.status === 'playing';
+        
+        // FIXED LOGIC: Only start immediate playback if:
+        // 1. Discord player is idle (not playing anything)
+        // 2. No song is currently playing (nowPlaying is null)
+        // 3. No queue exists (if there's a queue, add to queue instead)
+        // 4. Not currently querying or loading another song
+        const hasNowPlaying = !!session.nowPlaying;
+        const hasQueue = session.queue && session.queue.length > 0;
+        const isFirstSong = !hasNowPlaying && !hasQueue && !isDiscordPlaying;
+        const shouldStartPlayback = startPlayback && isDiscordIdle && !hasNowPlaying && !hasQueue && !isQuerying && !isLoading;
+        
+        console.log(`[QueueManager] shouldStartPlayback: ${shouldStartPlayback} (idle: ${isDiscordIdle}, hasNowPlaying: ${hasNowPlaying}, hasQueue: ${hasQueue}, noQuerying: ${!isQuerying}, noLoading: ${!isLoading})`);
+        
+        // DON'T clear the queue when player is idle - the queue should persist
+        // The queue should remain so that when a song finishes, the next song can be played
         
         // Add songs to session queue
         session.queue.push(...songs);
@@ -41,24 +69,44 @@ class QueueManager {
             session.lazyLoadInfo = options.lazyLoadInfo;
         }
 
-        // Handle preloading
+        // Start playback if needed (BEFORE preloading)
+        if (shouldStartPlayback && session.queue.length > 0) {
+            console.log(`[QueueManager] Starting immediate playback for first song in queue`);
+            const firstSong = session.queue.shift(); // Remove from queue
+            
+            // Use ImmediateProcessor for instant playback with loading screen
+            const { immediateProcessor } = await import('./immediate-processor.js');
+            const processedSong = await immediateProcessor.processForImmediatePlayback(
+                guildId, 
+                firstSong, 
+                djsClient, 
+                session, 
+                options
+            );
+            
+            // Start playback with processed data
+            const { player } = await import('../../handlers/core/player.js');
+            await player.playSong(guildId, processedSong, djsClient, session, options.interactionDetails, options.displayPref);
+        }
+        
+        // ALWAYS preload remaining songs in queue (even after immediate playback)
         if (shouldPreload && session.queue.length > 0) {
+            console.log(`[QueueManager] Preloading ${session.queue.length} remaining songs in queue`);
             if (preloadOnlyNext) {
                 // Only preload the first song in queue
-                await this.preloadNextSong(guildId, session, djsClient);
+                await preloader.preloadNextSongInQueue(guildId);
             } else {
                 // Preload multiple songs (not recommended for memory)
-                await this.preloadMultipleSongs(guildId, session, djsClient, songs.length);
+                await preloader.preloadMultipleSongsInQueue(guildId, session.queue.length);
             }
         }
 
-        // Start playback if needed
-        if (shouldStartPlayback && session.queue.length > 0) {
-            console.log(`[QueueManager] Starting playback for first song in queue`);
-            const { player } = await import('../../handlers/core/player.js');
-            const firstSong = session.queue.shift(); // Remove from queue
-            // Do not set loading here; 'querying' is driven by unified-media-handler during metadata fetch
-            await player.playSong(guildId, firstSong, djsClient, session, options.interactionDetails, options.displayPref);
+        // Clear querying state after successful queuing and preloading
+        console.log(`[QueueManager] DEBUG: shouldStartPlayback=${shouldStartPlayback}, isQuerying=${isQuerying}, condition=${!shouldStartPlayback && isQuerying}`);
+        if (!shouldStartPlayback && isQuerying) {
+            console.log(`[QueueManager] Clearing querying state after successful queuing`);
+            const { StateCoordinator } = await import('../../services/state-coordinator.js');
+            await StateCoordinator.setIdleState(guildId);
         }
 
         // Emit queue changed event once (for UI updates only, not preloading)
@@ -190,25 +238,6 @@ class QueueManager {
         }
     }
 
-    /**
-     * Preload only the next song in queue
-     * Also handles lazy loading if queue is getting low
-     */
-    async preloadNextSong(guildId, session, djsClient) {
-        if (session.queue.length === 0) {
-            console.log(`[QueueManager] No songs in queue to preload`);
-            return;
-        }
-
-        const nextSong = session.queue[0];
-        if (!nextSong || nextSong.isPreloading || nextSong.preloadCompleted) {
-            console.log(`[QueueManager] Next song already preloaded or in progress`);
-            return;
-        }
-
-        console.log(`[QueueManager] Preloading next song: "${nextSong.title}"`);
-        await preloader.preloadNextSong(guildId, session);
-    }
 
     /**
      * Load next batch of songs from database
@@ -305,13 +334,76 @@ class QueueManager {
     }
 
     /**
-     * Preload multiple songs (not recommended for memory)
+     * Handle auto-advance when a song finishes
      */
-    async preloadMultipleSongs(guildId, session, djsClient, count) {
-        console.log(`[QueueManager] Preloading ${count} songs for guild ${guildId}`);
-        // Implementation for preloading multiple songs
-        // This is not recommended for memory usage
+    async handleAutoAdvance(guildId) {
+        console.log(`[QueueManager] 🔄 AUTO-ADVANCE: Checking queue for guild ${guildId}`);
+        
+        try {
+            const { getExistingSession } = await import('../core/audio-state.js');
+            const session = getExistingSession(guildId);
+            
+            if (!session || !session.queue || session.queue.length === 0) {
+                console.log(`[QueueManager] ⏹️ AUTO-ADVANCE: No songs in queue, staying idle`);
+                return;
+            }
+            
+            console.log(`[QueueManager] 🔄 AUTO-ADVANCE: Found ${session.queue.length} songs in queue, starting next song`);
+            
+            // Get the next song from queue
+            const nextSong = session.queue.shift();
+            console.log(`[QueueManager] 🎵 AUTO-ADVANCE: Playing next song "${nextSong.title}"`);
+            
+            // Check if song is preloaded
+            if (preloader.isSongReady(nextSong)) {
+                console.log(`[QueueManager] ✅ AUTO-ADVANCE: Song is preloaded, starting playback`);
+                
+                // Get preloaded data
+                const preloadedData = preloader.getPreloadedData(guildId, nextSong.query);
+                if (preloadedData) {
+                    // Create stream details from preloaded data
+                    nextSong.streamDetails = {
+                        audioResource: preloadedData.audioResource,
+                        tempFile: preloadedData.tempFile,
+                        metadata: preloadedData.metadata
+                    };
+                    
+                    // Get Discord client
+                    const { ClientService } = await import('../../services/client-service.js');
+                    const djsClient = ClientService.getClient();
+                    
+                    // Play the preloaded song
+                    const { player } = await import('../../handlers/core/player.js');
+                    await player.playSong(guildId, nextSong, djsClient, session, null, null);
+                } else {
+                    console.error(`[QueueManager] ❌ AUTO-ADVANCE: Preloaded data not available for "${nextSong.title}"`);
+                }
+            } else {
+                console.log(`[QueueManager] ⚠️ AUTO-ADVANCE: Song not preloaded, processing with ImmediateProcessor`);
+                
+                // Use ImmediateProcessor for non-preloaded songs
+                const { immediateProcessor } = await import('./immediate-processor.js');
+                const { ClientService } = await import('../../services/client-service.js');
+                const djsClient = ClientService.getClient();
+                
+                const processedSong = await immediateProcessor.processForImmediatePlayback(
+                    guildId, 
+                    nextSong, 
+                    djsClient, 
+                    session, 
+                    {}
+                );
+                
+                // Play the processed song
+                const { player } = await import('../../handlers/core/player.js');
+                await player.playSong(guildId, processedSong, djsClient, session, null, null);
+            }
+            
+        } catch (error) {
+            console.error(`[QueueManager] ❌ AUTO-ADVANCE error:`, error.message);
+        }
     }
+
 }
 
 // Export singleton instance

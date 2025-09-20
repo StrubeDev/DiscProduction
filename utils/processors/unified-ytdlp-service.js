@@ -73,9 +73,9 @@ class UnifiedYtdlpService {
             return true;
         }
         
-        // Check if recently completed (within last 2 seconds)
+        // Check if recently completed (within last 500ms for same mode)
         const recentCompletion = this.recentlyCompletedQueries.get(queryKey);
-        if (recentCompletion && (Date.now() - recentCompletion) < 2000) {
+        if (recentCompletion && (Date.now() - recentCompletion) < 500) {
             console.log(`[UnifiedYtdlp] Query "${normalizedQuery}" (mode: ${mode}) was recently completed, blocking duplicate`);
             return true;
         }
@@ -266,15 +266,15 @@ class UnifiedYtdlpService {
         }
         
         const ytdlpArgs = [
-            '--cookies', 'cookies.txt',
+            '--cookies', '/app/cookies/cookies.txt',
             '--no-playlist',
             '--no-warnings',
             '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             '--referer', 'https://www.youtube.com/',
             '--socket-timeout', '30', // 30 second socket timeout
-            '--retries', '3', // Retry up to 3 times
-            '--fragment-retries', '3', // Retry fragments up to 3 times
-            '--retry-sleep', '1' // Wait 1 second between retries
+            '--retries', '5', // Retry up to 5 times
+            '--fragment-retries', '5', // Retry fragments up to 5 times
+            '--retry-sleep', '2' // Wait 2 seconds between retries
         ];
 
         // Add mode-specific arguments
@@ -405,7 +405,13 @@ class UnifiedYtdlpService {
                 if (code === 0) {
                     resolve({ stdout: stdout.trim(), stderr: stderr.trim(), process: ytdlpProcess });
                 } else {
-                    reject(new Error(`yt-dlp failed with code ${code}: ${stderr}`));
+                    // Check for specific error types
+                    if (stderr.includes('Connection refused') || stderr.includes('Connection reset')) {
+                        console.log(`[UnifiedYtdlp] 🔌 Connection error detected: ${stderr}`);
+                        reject(new Error(`Connection error (code ${code}): ${stderr}. This may be due to YouTube rate limiting or network issues.`));
+                    } else {
+                        reject(new Error(`yt-dlp failed with code ${code}: ${stderr}`));
+                    }
                 }
             });
             
@@ -523,7 +529,7 @@ class UnifiedYtdlpService {
                     duration: videoInfo.duration || 0,
                     uploader: videoInfo.uploader || 'Unknown',
                     thumbnail: videoInfo.thumbnail || null,  // Keep as 'thumbnail' for consistency
-                    thumbnailUrl: videoInfo.thumbnailUrl || null,  // Use the thumbnailUrl property
+                    imageUrl: videoInfo.thumbnailUrl || null,  // Use the imageUrl property
                     url: videoUrl,
                     source: 'yt-dlp Download + FFmpeg Streaming'
                 },
@@ -582,7 +588,7 @@ class UnifiedYtdlpService {
                     duration: videoInfo.duration || 0,
                     uploader: videoInfo.uploader || 'Unknown',
                     thumbnail: videoInfo.thumbnail || null,  // Keep as 'thumbnail' for consistency
-                    thumbnailUrl: videoInfo.thumbnailUrl || null,  // Use the thumbnailUrl property
+                    imageUrl: videoInfo.thumbnailUrl || null,  // Use the imageUrl property
                     url: actualVideoUrl, // Use the resolved URL
                     source: 'yt-dlp Download Only (Preload)'
                 }
@@ -602,12 +608,30 @@ class UnifiedYtdlpService {
             const result = await this.unifiedYtdlpCall(videoUrl, 'metadata', {}, guildId);
             const info = JSON.parse(result.stdout);
             
+            // Get the highest quality thumbnail
+            const getBestThumbnail = (info) => {
+                // Try to get the highest quality thumbnail available
+                if (info.thumbnails && Array.isArray(info.thumbnails)) {
+                    // Sort by resolution (width * height) descending
+                    const sortedThumbs = info.thumbnails
+                        .filter(thumb => thumb.url && thumb.width && thumb.height)
+                        .sort((a, b) => (b.width * b.height) - (a.width * a.height));
+                    
+                    if (sortedThumbs.length > 0) {
+                        return sortedThumbs[0].url;
+                    }
+                }
+                
+                // Fallback to standard thumbnail
+                return info.thumbnail || null;
+            };
+            
             const videoInfo = {
                 title: info.title || 'Unknown Title',
                 duration: info.duration || 0,
                 uploader: info.uploader || 'Unknown',
-                thumbnail: info.thumbnail || null,  // Keep as 'thumbnail' for consistency
-                thumbnailUrl: info.thumbnail || null  // Also provide as 'thumbnailUrl' for compatibility
+                thumbnail: getBestThumbnail(info),
+                imageUrl: getBestThumbnail(info)
             };
             
             // Check duration limit if guildId is provided
@@ -779,7 +803,7 @@ class UnifiedYtdlpService {
                     title: metadata.title || 'Unknown Title',
                     duration: metadata.duration || 0,
                     thumbnail: metadata.thumbnail || null,  // Keep as 'thumbnail' for consistency
-                    thumbnailUrl: metadata.thumbnail || null,  // Also provide as 'thumbnailUrl' for compatibility
+                    imageUrl: metadata.thumbnail || null,  // Also provide as 'imageUrl' for compatibility
                     url: videoUrl
                 }
             };

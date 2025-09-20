@@ -325,7 +325,7 @@ export async function updatePersistentQueueMessage(guildId, djsClient, session, 
                         session.queueMessage = { messageId: msg.id, channelId: msg.channelId };
                         
                         // Update the global session immediately to prevent duplicates
-                        const { guildAudioSessions } = await import('../utils/core/audio-state.js');
+                        const { guildAudioSessions } = await import('../core/audio-state.js');
                         const globalSession = guildAudioSessions.get(guildId);
                         if (globalSession) {
                             globalSession.queueMessage = session.queueMessage;
@@ -407,7 +407,7 @@ export async function cleanupQueueMessageOnSessionEnd(guildId, djsClient, sessio
         session.queueMessage = null;
         
         // Update global session
-        const { guildAudioSessions } = await import('../utils/audio-state.js');
+        const { guildAudioSessions } = await import('../core/audio-state.js');
         const globalSession = guildAudioSessions.get(guildId);
         if (globalSession) {
             globalSession.queueMessage = null;

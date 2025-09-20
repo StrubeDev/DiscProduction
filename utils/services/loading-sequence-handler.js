@@ -38,8 +38,11 @@ class LoadingSequenceHandler {
                 title: songObject.title,
                 artist: songObject.artist || 'Unknown Artist',
                 duration: songObject.duration || 'Unknown Duration',
-                thumbnail: songObject.thumbnailUrl,
-                addedBy: songObject.addedBy || 'Unknown User'
+                thumbnail: songObject.imageUrl,
+                addedBy: songObject.addedBy || 'Unknown User',
+                // Add source information for loading page logic
+                source: songObject.spotifyData ? 'spotify' : 'youtube',
+                isSpotify: !!songObject.spotifyData
             };
             
             await StateCoordinator.setLoadingState(guildId, true, songMetadata);
@@ -65,7 +68,10 @@ class LoadingSequenceHandler {
                 title: songObject.title,
                 artist: songObject.artist || 'Unknown Artist',
                 duration: songObject.duration || 'Unknown Duration',
-                thumbnail: songObject.thumbnailUrl
+                thumbnail: songObject.imageUrl,
+                // Add source information for playing page logic
+                source: songObject.spotifyData ? 'spotify' : 'youtube',
+                isSpotify: !!songObject.spotifyData
             };
             
             await StateCoordinator.setPlayingState(guildId, true, songData);

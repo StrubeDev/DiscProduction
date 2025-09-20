@@ -65,14 +65,9 @@ class Preloader {
             song.preloadCompleted = true;
             song.isPreloading = false;
             
-            // CRITICAL FIX: Update song.thumbnailUrl with the resolved thumbnail
-            if (downloadResult.metadata?.thumbnail) {
-                song.thumbnailUrl = downloadResult.metadata.thumbnail;
-                console.log(`[Preloader] ✅ Updated thumbnailUrl for "${song.title}": ${song.thumbnailUrl}`);
-                
-                // Note: Don't override state here - let the natural sequence handle it
-                // The querying state should remain blue until the actual loading process begins
-            }
+            // Audio processing should NOT touch thumbnails - that's for display logic only
+            // The preloader only handles audio file preparation, not image processing
+            console.log(`[Preloader] ✅ Audio processing completed - thumbnails left untouched`);
             
             // DO NOT store heavy objects on song - keep them in guild-scoped storage only
             console.log(`[Preloader] ✅ Preload completed - heavy data stored separately, song object kept lightweight`);
@@ -279,6 +274,62 @@ class Preloader {
             return guildPreloadedData.get(songQuery);
         }
         return null;
+    }
+
+    /**
+     * Preload the next song in queue for a guild
+     */
+    async preloadNextSongInQueue(guildId) {
+        console.log(`[Preloader] 🔄 Preloading next song in queue for guild ${guildId}`);
+        
+        try {
+            const { getExistingSession } = await import('../core/audio-state.js');
+            const session = getExistingSession(guildId);
+            
+            if (!session || !session.queue || session.queue.length === 0) {
+                console.log(`[Preloader] ⏹️ No songs in queue to preload for guild ${guildId}`);
+                return;
+            }
+            
+            // Get the first song in queue (next to be played)
+            const nextSong = session.queue[0];
+            console.log(`[Preloader] 🎵 Preloading next song: "${nextSong.title}"`);
+            
+            // Start preloading the next song
+            await this.startPreloadForSong(nextSong, guildId);
+            
+        } catch (error) {
+            console.error(`[Preloader] ❌ Error preloading next song:`, error.message);
+        }
+    }
+
+    /**
+     * Preload multiple songs in queue for a guild
+     */
+    async preloadMultipleSongsInQueue(guildId, count = 1) {
+        console.log(`[Preloader] 🔄 Preloading ${count} songs in queue for guild ${guildId}`);
+        
+        try {
+            const { getExistingSession } = await import('../core/audio-state.js');
+            const session = getExistingSession(guildId);
+            
+            if (!session || !session.queue || session.queue.length === 0) {
+                console.log(`[Preloader] ⏹️ No songs in queue to preload for guild ${guildId}`);
+                return;
+            }
+            
+            // Preload up to the specified count
+            const songsToPreload = session.queue.slice(0, count);
+            console.log(`[Preloader] 🎵 Preloading ${songsToPreload.length} songs: ${songsToPreload.map(s => s.title).join(', ')}`);
+            
+            // Start preloading each song
+            for (const song of songsToPreload) {
+                await this.startPreloadForSong(song, guildId);
+            }
+            
+        } catch (error) {
+            console.error(`[Preloader] ❌ Error preloading multiple songs:`, error.message);
+        }
     }
 }
 
