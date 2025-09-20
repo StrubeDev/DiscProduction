@@ -1,0 +1,81 @@
+# Jamly Discord Bot - Docker Compose Setup
+version: '3.8'
+
+services:
+  disc-music:
+    build: .
+    container_name: disc-music-bot
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    
+    # Environment variables
+    environment:
+      - NODE_ENV=production
+      - TZ=UTC
+      # Map your .env variables correctly
+      - DISCORD_TOKEN=${BOT_TOKEN}
+      - DISCORD_CLIENT_ID=${APP_ID}
+      # PostgreSQL connection to existing container
+      - POSTGRES_HOST=disc-music-db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    
+    # Connect to shared network with PostgreSQL
+    networks:
+      - jamly-network
+    
+    # Mount env file (create .env with your Discord token)
+    env_file:
+      - .env
+    
+    # Expose port for Discord interactions
+    ports:
+      - "3000:3000"
+    
+    # Volumes for persistent data
+    volumes:
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+      - ./cookies.txt:/app/cookies.txt
+      - ./database.db:/app/database.db
+    
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '1.0'
+        reservations:
+          memory: 2G
+          cpus: '0.5'
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Database service
+  postgres:
+    image: postgres:15-alpine
+    container_name: disc-music-db
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - jamly-network
+
+volumes:
+  postgres_data:
+
+networks:
+  jamly-network:
+    driver: bridge

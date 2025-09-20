@@ -1,0 +1,42 @@
+{
+  "name": "disc-music",
+  "private": true,
+  "version": "1.0.0",
+  "description": "stream music from YouTube to Discord using slash commands",
+  "keywords": [
+    "discord",
+    "bot",
+    "music",
+    "youtube",
+    "slash commands"
+  ],
+  "main": "app.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18.x"
+  },
+  "scripts": {
+    "start": "node --expose-gc --max-old-space-size=512 app.js",
+    "register": "node commands.js",
+    "dev": "nodemon --expose-gc --max-old-space-size=512 app.js"
+  },
+  "author": "Korby Strube",
+  "license": "MIT",
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.18.0",
+    "discord-interactions": "^4.0.0",
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.16.3",
+    "yt-dlp-wrap": "^2.3.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "eslint": "^9.28.0",
+    "globals": "^16.2.0",
+    "nodemon": "^3.0.0"
+  }
+}

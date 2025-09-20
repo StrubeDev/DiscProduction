@@ -1,0 +1,81 @@
+# Production Discord Bot Setup with nginx + SSL
+version: '3.8'
+
+services:
+  jamly-bot:
+    build: .
+    container_name: jamly-discord-bot-prod
+    restart: unless-stopped
+    
+    environment:
+      - NODE_ENV=production
+      - TZ=UTC
+      - DISCORD_TOKEN=${BOT_TOKEN}
+      - DISCORD_CLIENT_ID=${APP_ID}
+      - POSTGRES_HOST=disc-music-db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    
+    networks:
+      - jamly-network
+    
+    env_file:
+      - .env
+    
+    volumes:
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+      - ./cookies.txt:/app/cookies.txt:ro
+      - ./database.db:/app/database.db
+    
+    # No ports exposed - nginx handles external access
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: jamly-nginx-prod
+    restart: unless-stopped
+    
+    ports:
+      - "80:80"      # HTTP (redirects to HTTPS)
+      - "443:443"    # HTTPS
+    
+    volumes:
+      - ./nginx-production.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro              # SSL certificates
+      - ./logs/nginx:/var/log/nginx          # nginx logs
+    
+    networks:
+      - jamly-network
+    
+    depends_on:
+      - jamly-bot
+    
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Automatic SSL certificate renewal (Let's Encrypt)
+  certbot:
+    image: certbot/certbot
+    container_name: jamly-certbot
+    volumes:
+      - ./ssl:/etc/letsencrypt
+      - ./ssl-challenges:/var/www/certbot
+    command: sleep 86400  # Sleep for 24 hours, then exit
+    restart: unless-stopped
+
+networks:
+  jamly-network:
+    external: true
+
+volumes:
+  ssl_data:
