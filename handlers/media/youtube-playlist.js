@@ -12,7 +12,7 @@ import { queueManager } from '../../utils/services/queue-manager.js';
 import { playerStateManager } from '../../utils/core/player-state-manager.js';
 
 // Helper function to get YouTube thumbnail URL
-function getYouTubeThumbnailUrl(videoId, quality = 'hqdefault') {
+function getYouTubeThumbnailUrl(videoId, quality = 'maxresdefault') {
     if (!videoId) return null;
     return `https://img.youtube.com/vi/${videoId}/${quality}.jpg`;
 }
@@ -41,10 +41,28 @@ export async function handleYouTubePlaylist(djsClient, guildId, member, channelI
     console.log(`[YouTubePlaylist] Starting playlist processing for guild ${guildId}`);
     console.log(`[YouTubePlaylist] Query: ${query}`);
     
+    // CRITICAL: Check StateCoordinator for active querying/loading/playing states
+    const { StateCoordinator } = await import('../../services/state-coordinator.js');
+    const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+    const isQuerying = trackedState?.currentState === 'querying';
+    const isLoading = trackedState?.currentState === 'loading';
+    const isPlaying = trackedState?.currentState === 'playing';
+    
+    console.log(`[YouTubePlaylist] StateCoordinator check:`, {
+        currentState: trackedState?.currentState,
+        isQuerying,
+        isLoading,
+        isPlaying
+    });
+    
+    // If any song is actively being processed, force queue-only mode
+    const hasActiveProcess = isQuerying || isLoading || isPlaying;
+    
     // FIXED: Check if another song is already being processed for this guild
     const lockAcquired = acquireGuildLock(guildId);
-    if (!lockAcquired) {
+    if (!lockAcquired || hasActiveProcess) {
         console.log(`[YouTubePlaylist] Another song is being processed for guild ${guildId}, will add to queue after processing`);
+        console.log(`[YouTubePlaylist] Active process detected: querying=${isQuerying}, loading=${isLoading}, playing=${isPlaying}`);
     } else {
         console.log(`[YouTubePlaylist] Acquired processing lock for guild ${guildId}`);
     }

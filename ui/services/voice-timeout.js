@@ -4,6 +4,7 @@
 
 import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { getGuildSettings, updateGuildSettings } from '../../utils/database/guildSettings.js';
+import { guildAudioSessions } from '../../utils/core/audio-state.js';
 
 // Maps for tracking voice timeouts
 export const guildTimeouts = new Map(); // guildId -> timeoutInMinutes

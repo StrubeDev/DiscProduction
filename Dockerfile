@@ -32,8 +32,12 @@ RUN npm ci --only=production
 # Copy application code
 COPY . .
 
-# Create logs and temp directories
-RUN mkdir -p logs temp
+# Copy and set up entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create logs, temp, and cookies directories
+RUN mkdir -p logs temp cookies
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -42,7 +46,8 @@ RUN addgroup -g 1001 -S nodejs && \
 # Set minimal ownership (skip slow recursive chown for development)
 RUN chown jamly:nodejs /app && \
     chown -R jamly:nodejs /app/logs && \
-    chown -R jamly:nodejs /app/temp
+    chown -R jamly:nodejs /app/temp && \
+    chown -R jamly:nodejs /app/cookies
 
 # Switch to non-root user
 USER jamly
@@ -53,6 +58,9 @@ EXPOSE 3000
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD node -e "console.log('Bot healthy')" || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Start the bot
 CMD ["npm", "start"]

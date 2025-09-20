@@ -76,10 +76,10 @@ export class ApplicationService {
             return handler(req, res, ClientService.getClient());
           }
         } else if (type === InteractionType.MESSAGE_COMPONENT) {
-          console.log(new Date().toISOString(), `[APP_DEBUG] ID: ${interactionId} | MESSAGE_COMPONENT interaction received. Full body:`, JSON.stringify(req.body, null, 2));
+          // console.log(new Date().toISOString(), `[APP_DEBUG] ID: ${interactionId} | MESSAGE_COMPONENT interaction received. Full body:`, JSON.stringify(req.body, null, 2));
           const handler = messageComponentHandlers[data.custom_id];
           if (handler) {
-            console.log(new Date().toISOString(), `[APP_DEBUG] ID: ${interactionId} | Component: ${data.custom_id} | Dispatching to component handler.`);
+            // console.log(new Date().toISOString(), `[APP_DEBUG] ID: ${interactionId} | Component: ${data.custom_id} | Dispatching to component handler.`);
             return handler(req, res, data, ClientService.getClient());
           } else {
             console.warn(new Date().toISOString(), `[APP_DEBUG] ID: ${interactionId} | Component: ${data.custom_id} | No handler found. Available handlers:`, Object.keys(messageComponentHandlers));

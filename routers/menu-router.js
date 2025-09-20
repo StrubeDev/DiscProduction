@@ -5,7 +5,7 @@
 
 import { InteractionResponseType } from 'discord-interactions';
 import { handleMainMenuPage } from '../ui/pages/main-menu.js';
-import { handlePlaybackControlsPage } from '../ui/pages/playback-controls.js';
+// Removed old playback controls page - using message/content-generators.js instead
 import { handleBotVoiceControlsPage } from '../handlers/ui/handlers/bot-voice-controls-handler.js';
 import { handleQueueHistoryPage } from '../ui/pages/queue-history.js';
 import { handleToolsPage } from '../ui/pages/tools.js';
@@ -37,7 +37,7 @@ export async function routeMenuNavigation(customId, req, res, djsClient) {
                 
             case 'menu_nav_config':
             case 'menu_nav_playback':
-                return await handlePlaybackControlsPage(req, res, guildId, djsClient);
+                return await handlePlaybackControlsPageNew(req, res, guildId, djsClient);
                 
             case 'menu_nav_bot_voice_controls':
                 // Check config permissions
@@ -69,5 +69,42 @@ export async function routeMenuNavigation(customId, req, res, djsClient) {
     } catch (error) {
         console.error(`[MenuRouter] Error routing navigation for ${customId}:`, error);
         return sendErrorResponse(res, '❌ An error occurred while navigating the menu.');
+    }
+}
+
+/**
+ * Handle playback controls page using the correct route
+ */
+async function handlePlaybackControlsPageNew(req, res, guildId, djsClient) {
+    try {
+        console.log(`[MenuRouter] Handling playback controls page for guild ${guildId}`);
+        
+        // Get current state from StateCoordinator
+        const { StateCoordinator } = await import('../services/state-coordinator.js');
+        const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+        const stateType = trackedState?.currentState || 'idle';
+        
+        // Generate content using the correct route
+        const { generatePlaybackControlsContent } = await import('../message/content-generators.js');
+        const content = await generatePlaybackControlsContent(guildId, djsClient, stateType, trackedState);
+        
+        // Send the response
+        res.send({
+            type: InteractionResponseType.UPDATE_MESSAGE,
+            data: content
+        });
+        
+    } catch (error) {
+        console.error(`[MenuRouter] Error handling playback controls page:`, error);
+        res.send({
+            type: InteractionResponseType.UPDATE_MESSAGE,
+            data: {
+                embeds: [{
+                    color: 0xff0000,
+                    description: "❌ Error loading playback controls. Please try again."
+                }],
+                components: []
+            }
+        });
     }
 }

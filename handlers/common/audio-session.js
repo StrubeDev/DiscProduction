@@ -22,13 +22,6 @@ export async function getOrCreateVoiceConnection(djsClient, guildId, member, ret
     
     // Check if we need to move to a different voice channel
     if (connection && connection.state.status !== VoiceConnectionStatus.Destroyed) {
-        // CRITICAL: Stop any playing audio before reconnecting to prevent multiple streams
-        const existingSession = guildAudioSessions.get(guildId);
-        if (existingSession && existingSession.player) {
-            console.log(`[VoiceConnection] Stopping existing audio before reconnecting to prevent multiple streams`);
-            existingSession.player.stop(true);
-        }
-        
         // Get the user's current voice channel
         let userVoiceChannelId = null;
         if (member?.voice?.channel?.id) {
@@ -46,14 +39,31 @@ export async function getOrCreateVoiceConnection(djsClient, guildId, member, ret
         
         // Only disconnect if user is in a different voice channel
         if (userVoiceChannelId && connection.joinConfig.channelId !== userVoiceChannelId) {
-            console.log(`[VoiceConnection] User moved to different voice channel, disconnecting from ${connection.joinConfig.channelId} to join ${userVoiceChannelId}`);
+            console.log(`[VoiceConnection] User moved to different voice channel, pausing audio and disconnecting from ${connection.joinConfig.channelId} to join ${userVoiceChannelId}`);
+            
+            // PAUSE audio instead of stopping it when user moves channels
+            const existingSession = guildAudioSessions.get(guildId);
+            if (existingSession && existingSession.player) {
+                console.log(`[VoiceConnection] Pausing audio for channel move - music will resume when reconnected`);
+                // Pause the player instead of stopping it
+                existingSession.player.pause();
+            }
+            
             connection.destroy();
             connection = null;
         } else if (userVoiceChannelId) {
             console.log(`[VoiceConnection] User is already in the same voice channel (${userVoiceChannelId}), reusing existing connection`);
             return { connection, error: null };
         } else {
-            console.log(`[VoiceConnection] User is not in a voice channel, disconnecting from existing connection`);
+            console.log(`[VoiceConnection] User is not in a voice channel, stopping audio and disconnecting from existing connection`);
+            
+            // Only stop audio when user leaves voice channel entirely
+            const existingSession = guildAudioSessions.get(guildId);
+            if (existingSession && existingSession.player) {
+                console.log(`[VoiceConnection] Stopping audio - user left voice channel`);
+                existingSession.player.stop(true);
+            }
+            
             connection.destroy();
             connection = null;
         }
@@ -64,8 +74,7 @@ export async function getOrCreateVoiceConnection(djsClient, guildId, member, ret
         hasUser: !!member?.user,
         userId: member?.user?.id,
         hasVoice: !!member?.voice,
-        voiceChannelId: member?.voice?.channel?.id,
-        memberKeys: member ? Object.keys(member) : 'no member'
+        voiceChannelId: member?.voice?.channel?.id
     });
 
     // Try to fetch fresh member data if voice state is missing or incomplete
@@ -76,8 +85,7 @@ export async function getOrCreateVoiceConnection(djsClient, guildId, member, ret
             const freshMember = await guild.members.fetch(member.user.id);
             console.log(`[VoiceConnection] Fresh member voice state:`, {
                 hasVoice: !!freshMember?.voice,
-                voiceChannelId: freshMember?.voice?.channel?.id,
-                channelName: freshMember?.voice?.channel?.name
+                voiceChannelId: freshMember?.voice?.channel?.id
             });
             
             if (freshMember?.voice?.channel) {
@@ -88,8 +96,7 @@ export async function getOrCreateVoiceConnection(djsClient, guildId, member, ret
                 console.log(`[VoiceConnection] Voice state exists but channel undefined, using channelId directly`);
                 console.log(`[VoiceConnection] Voice state details:`, {
                     state: freshMember.voice.state,
-                    channelId: freshMember.voice.channelId,
-                    guildId: freshMember.voice.guildId
+                    channelId: freshMember.voice.channelId
                 });
                 
                 // Use the channelId from voice state to fetch the channel directly
@@ -145,8 +152,7 @@ export async function getOrCreateVoiceConnection(djsClient, guildId, member, ret
         console.log(`[VoiceConnection] Client user check:`, {
             hasClient: !!djsClient,
             hasUser: !!djsClient?.user,
-            userId: djsClient?.user?.id,
-            clientReady: djsClient?.readyAt
+            userId: djsClient?.user?.id
         });
         
         // Get bot user ID - use stored value if djsClient.user is undefined
@@ -236,26 +242,39 @@ export async function getOrCreateAudioSession(guildId, connection, channelId, dj
     if (session && session.player && session.connection) {
         console.log(`[AudioSession] Reusing existing session for guild ${guildId}`);
         
-        // CRITICAL: Reset session state when reusing to ensure clean state
-        console.log(`[AudioSession] 🔄 RESETTING SESSION STATE for reuse`);
-        
-        // Clear any stuck state flags
-        const state = playerStateManager.getState(guildId);
-        if (state) {
-            state.discordStatus = 'idle';
-            state.isPlaying = false;
-            state.isPaused = false;
-            state.isStarting = false;
-            state.isBuffering = false;
-            state.hasNowPlaying = false;
-            state.nowPlaying = null;
-            console.log(`[AudioSession] ✅ Session state reset for reuse`);
+        // CRITICAL: Only reset session state if player is actually idle
+        // If player is playing, we should NOT reset the state!
+        if (session.player.state.status === 'idle') {
+            console.log(`[AudioSession] 🔄 RESETTING SESSION STATE for reuse (player is idle)`);
+            
+            // Clear any stuck state flags
+            const state = playerStateManager.getState(guildId);
+            if (state) {
+                state.discordStatus = 'idle';
+                state.isPlaying = false;
+                state.isPaused = false;
+                state.isStarting = false;
+                state.isBuffering = false;
+                state.hasNowPlaying = false;
+                state.nowPlaying = null;
+                console.log(`[AudioSession] ✅ Session state reset for reuse`);
+            }
+        } else if (session.player.state.status === 'paused') {
+            console.log(`[AudioSession] 🔄 RESUMING PAUSED AUDIO after reconnection`);
+            
+            // Auto-resume paused audio when reconnecting
+            try {
+                const { player } = await import('../core/player.js');
+                const playerInstance = new player.Player();
+                playerInstance.resumeSong(guildId, session);
+                console.log(`[AudioSession] ✅ Auto-resumed paused audio for guild ${guildId}`);
+            } catch (error) {
+                console.error(`[AudioSession] Error auto-resuming audio:`, error.message);
+            }
+        } else {
+            console.log(`[AudioSession] ✅ KEEPING EXISTING STATE - Player is ${session.player.state.status}, not resetting`);
         }
         
-        // CRITICAL: Ensure we're not creating duplicate players
-        if (session.player.state.status !== 'idle') {
-            console.log(`[AudioSession] WARNING: Existing player is active (${session.player.state.status}) - this could cause audio overlap`);
-        }
         return session;
     }
 
@@ -326,7 +345,6 @@ export async function getOrCreateAudioSession(guildId, connection, channelId, dj
         console.log(`[AudioSession] 🔍 DEBUG: Player state before attaching listeners: ${player.state.status}`);
         console.log(`[AudioSession] 🔍 DEBUG: Player object:`, {
             hasOn: typeof player.on === 'function',
-            hasState: !!player.state,
             stateStatus: player.state?.status
         });
         
@@ -369,7 +387,7 @@ export async function getOrCreateAudioSession(guildId, connection, channelId, dj
         
         // Clean up processes on error
         try {
-            const { processManager } = await import('../../utils/services/process-manager.js');
+            const { processManager } = await import('../utils/services/process-manager.js');
             const activeProcesses = processManager.getGuildProcesses(guildId);
             console.log(`[AudioPlayer] Error cleanup: killing ${activeProcesses.length} processes for guild ${guildId}`);
             processManager.killGuildProcesses(guildId);
@@ -432,7 +450,7 @@ export async function performComprehensiveStopCleanup(guildId, session, reason =
     try {
         // STEP 1: COMPREHENSIVE CLEANUP - Use centralized cleanup service
         try {
-            const { cleanupService } = await import('../../utils/services/cleanup-service.js');
+            const { cleanupService } = await import('../utils/services/cleanup-service.js');
             await cleanupService.cleanupGuildResources(guildId, session);
             console.log(`[StopCleanup] ✅ Comprehensive cleanup completed for guild ${guildId}`);
         } catch (cleanupError) {
@@ -448,7 +466,7 @@ export async function performComprehensiveStopCleanup(guildId, session, reason =
         // STEP 4: COMPREHENSIVE MAP CLEANUP
         try {
         // Use centralized cleanup service
-        const { cleanupService } = await import('../../utils/services/cleanup-service.js');
+        const { cleanupService } = await import('../utils/services/cleanup-service.js');
         await cleanupService.cleanupSongFinishMaps(guildId);
             console.log(`[StopCleanup] Map cleanup completed for guild ${guildId}`);
         } catch (error) {
@@ -457,7 +475,7 @@ export async function performComprehensiveStopCleanup(guildId, session, reason =
         
         // STEP 5: AGGRESSIVE YTDLP CLEANUP
         try {
-            const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+            const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
             unifiedYtdlpService.aggressiveSongCleanup();
         } catch (aggressiveCleanupError) {
             console.warn(`[StopCleanup] Error during aggressive ytdlp cleanup:`, aggressiveCleanupError.message);
@@ -471,7 +489,7 @@ export async function performComprehensiveStopCleanup(guildId, session, reason =
         
         // STEP 7: CLEAR DATABASE QUEUE
         try {
-            const { saveGuildQueue } = await import('../../utils/database/guildQueues.js');
+            const { saveGuildQueue } = await import('../utils/database/guildQueues.js');
             await saveGuildQueue(guildId, { 
                 nowPlaying: null, 
                 queue: [], 
@@ -503,7 +521,7 @@ export async function performComprehensiveStopCleanup(guildId, session, reason =
         
         // STEP 8: LOG MEMORY MAP AFTER CLEANUP
         try {
-            const { processManager } = await import('../../utils/services/process-manager.js');
+            const { processManager } = await import('../utils/services/process-manager.js');
             console.log(`[StopCleanup] 📊 MEMORY MAP AFTER STOP CLEANUP:`);
             processManager.logDetailedMemoryMap();
         } catch (error) {
@@ -544,7 +562,7 @@ export async function applyVolumeToSession(guildId, newVolume, isMuted = false, 
                     console.log(`[Volume] 📝 Re-processing song "${song.title}" with new volume ${session.volume}%`);
                     
                     try {
-                        const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+                        const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
                         const streamData = await unifiedYtdlpService.getAudioStreamFromTempFile(
                             song.preloadedTempFile, // Use original temp file for re-processing
                             guildId, 
@@ -579,7 +597,7 @@ export async function applyVolumeToSession(guildId, newVolume, isMuted = false, 
 
 // Simple cleanup for when session is no longer needed - now uses centralized cleanup service
 export async function cleanupAudioSession(guildId) {
-    const { cleanupService } = await import('../../utils/services/cleanup-service.js');
+    const { cleanupService } = await import('../utils/services/cleanup-service.js');
     return await cleanupService.cleanupAudioSession(guildId);
 }
 
@@ -597,11 +615,11 @@ export async function cleanupSongFinishMaps(guildId) {
     
     try {
         // Clean up process manager - remove old process data
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         processManager.cleanupOldProcessData();
         
         // Clean up unified ytdlp service - remove old queries
-        const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+        const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
         unifiedYtdlpService.cleanupStaleQueries();
         
         // Force cleanup of recently completed queries
@@ -664,11 +682,11 @@ export async function cleanupAllGuildMaps(guildId) {
     
     try {
         // Clean up process manager
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         processManager.cleanupGuildData(guildId);
         
         // Clean up unified ytdlp service
-        const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+        const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
         unifiedYtdlpService.cleanupGuildData(guildId);
         
         // Clean up menu component handlers
@@ -676,27 +694,27 @@ export async function cleanupAllGuildMaps(guildId) {
         cleanupGuildMaps(guildId);
         
         // Clean up message manager
-        const { cleanupGuildMessageLocks } = await import('../../utils/services/helpers/message-helpers.js');
+        const { cleanupGuildMessageLocks } = await import('../utils/services/helpers/message-helpers.js');
         cleanupGuildMessageLocks(guildId);
         
         // Clean up rate limiting
-        const { cleanupGuildRateLimit } = await import('../../utils/services/rateLimiting.js');
+        const { cleanupGuildRateLimit } = await import('../utils/services/rateLimiting.js');
         cleanupGuildRateLimit(guildId);
         
         // Clean up queue saver
-        const { queueSaver } = await import('../../utils/services/queue-saver.js');
+        const { queueSaver } = await import('../utils/services/queue-saver.js');
         queueSaver.cleanupGuildData(guildId);
         
         // Clean up pending queue
-        const { cleanupGuildPendingQueue } = await import('../../utils/services/pending-queue.js');
+        const { cleanupGuildPendingQueue } = await import('../utils/services/pending-queue.js');
         cleanupGuildPendingQueue(guildId);
         
         // Clean up commands
-        const { cleanupService } = await import('../../utils/services/cleanup-service.js');
+        const { cleanupService } = await import('../utils/services/cleanup-service.js');
         cleanupService.cleanupGuildCommandData(guildId);
         
         // Clean up loading states
-        const { unifiedLoadingService } = await import('../../utils/services/unified-loading-service.js');
+        const { unifiedLoadingService } = await import('../utils/services/unified-loading-service.js');
         unifiedLoadingService.cleanupGuildLoadingState(guildId);
         
         // Clean up missing Maps
@@ -717,7 +735,7 @@ export async function cleanupAllGuildMaps(guildId) {
         }
         
         // Clean up auto-advance service
-        const { autoAdvanceService } = await import('../../utils/services/auto-advance-service.js');
+        const { autoAdvanceService } = await import('../utils/services/auto-advance-service.js');
         autoAdvanceService.advanceInProgress.delete(guildId);
         
         console.log(`[Cleanup] ✅ COMPREHENSIVE MAP CLEANUP COMPLETE for guild ${guildId}`);
@@ -734,14 +752,14 @@ export async function inspectAllMaps() {
     
     try {
         // Process Manager Maps
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         console.log(`[MapInspector] Process Manager:`);
         console.log(`  - guildProcesses: ${processManager.guildProcesses?.size || 0} entries`);
         console.log(`  - processTypes: ${processManager.processTypes?.size || 0} entries`);
         console.log(`  - processMemory: ${processManager.processMemory?.size || 0} entries`);
         
         // Unified Ytdlp Service Maps
-        const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+        const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
         console.log(`[MapInspector] Unified Ytdlp Service:`);
         console.log(`  - activeQueries: ${unifiedYtdlpService.activeQueries?.size || 0} entries`);
         console.log(`  - recentlyCompletedQueries: ${unifiedYtdlpService.recentlyCompletedQueries?.size || 0} entries`);
@@ -752,7 +770,7 @@ export async function inspectAllMaps() {
         console.log(`  - Menu component Maps loaded via import`);
         
         // Message Manager Maps
-        const { cleanupGuildMessageLocks } = await import('../../utils/helpers/message-helpers.js');
+        const { cleanupGuildMessageLocks } = await import('../utils/helpers/message-helpers.js');
         console.log(`[MapInspector] Message Manager:`);
         console.log(`  - Message manager Maps loaded via import`);
         
@@ -762,13 +780,13 @@ export async function inspectAllMaps() {
         console.log(`  - Rate limiting Maps loaded via import`);
         
         // Queue Saver Maps
-        const { queueSaver } = await import('../../utils/queue-saver.js');
+        const { queueSaver } = await import('../utils/queue-saver.js');
         console.log(`[MapInspector] Queue Saver:`);
         console.log(`  - savedPlaylists: ${queueSaver.savedPlaylists?.size || 0} entries`);
         console.log(`  - autoSaveEnabled: ${queueSaver.autoSaveEnabled?.size || 0} entries`);
         
         // Pending Queue Maps
-        const { cleanupGuildPendingQueue } = await import('../../utils/core/pending-queue.js');
+        const { cleanupGuildPendingQueue } = await import('../utils/core/pending-queue.js');
         console.log(`[MapInspector] Pending Queue:`);
         console.log(`  - Pending queue Maps loaded via import`);
         
@@ -801,12 +819,12 @@ export async function inspectAllMaps() {
         console.log(`  - messageReferences: ${messageReferences?.size || 0} entries`);
         
         // Loading Service Maps
-        const { unifiedLoadingService } = await import('../../utils/services/unified-loading-service.js');
+        const { unifiedLoadingService } = await import('../utils/services/unified-loading-service.js');
         console.log(`[MapInspector] Loading Service:`);
         console.log(`  - activeLoadings: ${unifiedLoadingService.activeLoadings?.size || 0} entries`);
         
         // Auto-Advance Service Maps
-        const { autoAdvanceService } = await import('../../utils/services/auto-advance-service.js');
+        const { autoAdvanceService } = await import('../utils/services/auto-advance-service.js');
         console.log(`[MapInspector] Auto-Advance Service:`);
         console.log(`  - advanceInProgress: ${autoAdvanceService.advanceInProgress?.size || 0} entries`);
         
@@ -888,7 +906,7 @@ export async function inspectStuckProcesses() {
     console.log(`[StuckProcessInspector] 🔍 INSPECTING STUCK PROCESSES:`);
     
     try {
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         const now = Date.now();
         let stuckCount = 0;
         
@@ -955,7 +973,7 @@ export async function forceKillStuckProcesses() {
     console.log(`[ForceKill] 🔪 FORCE KILLING STUCK PROCESSES:`);
     
     try {
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         const now = Date.now();
         let killedCount = 0;
         
@@ -1021,13 +1039,13 @@ export async function aggressiveMemoryCleanup() {
     
     try {
         // Clean up Maps aggressively
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         processManager.cleanupOldProcessData();
         
-        const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+        const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
         unifiedYtdlpService.cleanupStaleQueries();
         
-        const { preloader } = await import('../../utils/services/preloader.js');
+        const { preloader } = await import('../utils/services/preloader.js');
         preloader.cleanupOldPreloadedData();
         
         // Force garbage collection
@@ -1056,28 +1074,28 @@ export async function emergencyMemoryCleanup() {
     
     try {
         // Clean up all Maps aggressively
-        const { processManager } = await import('../../utils/services/process-manager.js');
+        const { processManager } = await import('../utils/services/process-manager.js');
         processManager.cleanupOldProcessData();
         
-        const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
+        const { unifiedYtdlpService } = await import('../utils/processors/unified-ytdlp-service.js');
         unifiedYtdlpService.cleanupAllData();
         
         const { cleanupOldMapData } = await import('../menu-component-handlers.js');
         cleanupOldMapData();
         
-        const { cleanupOldMessageLocks } = await import('../../utils/services/helpers/message-helpers.js');
+        const { cleanupOldMessageLocks } = await import('../utils/services/helpers/message-helpers.js');
         cleanupOldMessageLocks();
         
-        const { cleanupOldRateLimitData } = await import('../../utils/services/rateLimiting.js');
+        const { cleanupOldRateLimitData } = await import('../utils/services/rateLimiting.js');
         cleanupOldRateLimitData();
         
-        const { queueSaver } = await import('../../utils/services/queue-saver.js');
+        const { queueSaver } = await import('../utils/services/queue-saver.js');
         queueSaver.cleanupOldData();
         
-        const { cleanupOldPendingQueues } = await import('../../utils/services/pending-queue.js');
+        const { cleanupOldPendingQueues } = await import('../utils/services/pending-queue.js');
         cleanupOldPendingQueues();
         
-        const { cleanupService } = await import('../../utils/services/cleanup-service.js');
+        const { cleanupService } = await import('../utils/services/cleanup-service.js');
         cleanupService.cleanupOldCommandData();
         
         // Clean up missing Maps aggressively
@@ -1094,7 +1112,7 @@ export async function emergencyMemoryCleanup() {
         messageReferences.clear();
         
         // Clean up auto-advance service
-        const { autoAdvanceService } = await import('../../utils/services/auto-advance-service.js');
+        const { autoAdvanceService } = await import('../utils/services/auto-advance-service.js');
         autoAdvanceService.advanceInProgress.clear();
         
         // SINGLE GARBAGE COLLECTION (streamlined)

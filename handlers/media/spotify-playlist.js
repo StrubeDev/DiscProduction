@@ -13,10 +13,28 @@ export async function handleSpotifyPlaylist(djsClient, guildId, member, channelI
     console.log(`[SpotifyPlaylist] Starting playlist processing for guild ${guildId}`);
     console.log(`[SpotifyPlaylist] Query: ${query}`);
     
+    // CRITICAL: Check StateCoordinator for active querying/loading/playing states
+    const { StateCoordinator } = await import('../../services/state-coordinator.js');
+    const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+    const isQuerying = trackedState?.currentState === 'querying';
+    const isLoading = trackedState?.currentState === 'loading';
+    const isPlaying = trackedState?.currentState === 'playing';
+    
+    console.log(`[SpotifyPlaylist] StateCoordinator check:`, {
+        currentState: trackedState?.currentState,
+        isQuerying,
+        isLoading,
+        isPlaying
+    });
+    
+    // If any song is actively being processed, force queue-only mode
+    const hasActiveProcess = isQuerying || isLoading || isPlaying;
+    
     // FIXED: Check if another song is already being processed for this guild
     const lockAcquired = acquireGuildLock(guildId);
-    if (!lockAcquired) {
+    if (!lockAcquired || hasActiveProcess) {
         console.log(`[SpotifyPlaylist] Another song is being processed for guild ${guildId}, will add to queue after processing`);
+        console.log(`[SpotifyPlaylist] Active process detected: querying=${isQuerying}, loading=${isLoading}, playing=${isPlaying}`);
     } else {
         console.log(`[SpotifyPlaylist] Acquired processing lock for guild ${guildId}`);
     }

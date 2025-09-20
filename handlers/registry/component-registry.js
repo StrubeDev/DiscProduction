@@ -169,14 +169,14 @@ export class ComponentRegistry {
         }
         
         const modalData = menuNavHandlers.getAddSongModalData();
-        console.log('[COMPONENT_REGISTRY] Modal data:', modalData);
+        // console.log('[COMPONENT_REGISTRY] Modal data:', modalData);
         
         const response = {
           type: InteractionResponseType.MODAL,
           data: modalData,
         };
         
-        console.log('[COMPONENT_REGISTRY] Sending modal response:', JSON.stringify(response, null, 2));
+        // console.log('[COMPONENT_REGISTRY] Sending modal response:', JSON.stringify(response, null, 2));
         return res.send(response);
       } catch (error) {
         console.error('[COMPONENT_REGISTRY] Error in open_add_song_modal handler:', error);

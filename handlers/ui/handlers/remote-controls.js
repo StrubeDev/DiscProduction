@@ -4,7 +4,7 @@
 
 import { AudioPlayerStatus } from '@discordjs/voice';
 import { InteractionResponseType } from 'discord-api-types/v10';
-import { playbackcontrols } from '../../../ui/playback-controls.js';
+// Import removed - using new message system
 import { resetVoiceTimeout } from '../../../ui/services/voice-timeout.js';
 
 // Import required services and managers
@@ -68,9 +68,13 @@ export async function handleRemotePlayPause(req, res, _data, djsClient) {
     // FIXED: Emit queue change event to update BOTH queue panel and chat message
     djsClient.emit('queueChanged', guildId, session);
 
+    // Use new message system
+    const { updatePlaybackControlsEmbed } = await import('../../../message/update-handlers.js');
+    await updatePlaybackControlsEmbed(guildId, djsClient);
+    
     return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
-        data: await playbackcontrols(guildId, djsClient)
+        data: { content: "" }
     });
 }
 
@@ -123,9 +127,13 @@ export async function handleRemoteSkip(req, res, _data, djsClient) {
     // This prevents redundant updates and ensures proper queue progression
     console.log(`[RemoteSkip] Skipping manual queue change event - audio player events will handle it automatically`);
 
+    // Use new message system
+    const { updatePlaybackControlsEmbed } = await import('../../../message/update-handlers.js');
+    await updatePlaybackControlsEmbed(guildId, djsClient);
+    
     return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
-        data: await playbackcontrols(guildId, djsClient)
+        data: { content: "" }
     });
 }
 
@@ -175,9 +183,13 @@ export async function handleRemoteStop(req, res, _data, djsClient) {
         djsClient.emit('queueChanged', guildId, session);
     }
 
+    // Use new message system
+    const { updatePlaybackControlsEmbed } = await import('../../../message/update-handlers.js');
+    await updatePlaybackControlsEmbed(guildId, djsClient);
+    
     return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
-        data: await playbackcontrols(guildId, djsClient)
+        data: { content: "" }
     });
 }
 
@@ -218,10 +230,13 @@ export async function handleRemoteShuffle(req, res, _data, djsClient) {
         // Call the working shuffle command
         await handleShuffleCommand(req, mockRes, djsClient);
         
-        // Return the playback controls update instead of the shuffle command's response
+        // Use new message system
+        const { updatePlaybackControlsEmbed } = await import('../../../message/update-handlers.js');
+        await updatePlaybackControlsEmbed(guildId, djsClient);
+        
         return originalRes.send({
             type: InteractionResponseType.UPDATE_MESSAGE,
-            data: await playbackcontrols(guildId, djsClient)
+            data: { content: "" }
         });
         
     } catch (error) {
@@ -266,9 +281,13 @@ export async function handleRemoteVolumeUp(req, res, _data, djsClient) {
         resetVoiceTimeout(guildId, djsClient);
     }
 
+    // Use new message system
+    const { updatePlaybackControlsEmbed } = await import('../../../message/update-handlers.js');
+    await updatePlaybackControlsEmbed(guildId, djsClient);
+    
     return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
-        data: await playbackcontrols(guildId, djsClient)
+        data: { content: "" }
     });
 }
 
@@ -302,8 +321,12 @@ export async function handleRemoteVolumeDown(req, res, _data, djsClient) {
         resetVoiceTimeout(guildId, djsClient);
     }
 
+    // Use new message system
+    const { updatePlaybackControlsEmbed } = await import('../../../message/update-handlers.js');
+    await updatePlaybackControlsEmbed(guildId, djsClient);
+    
     return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
-        data: await playbackcontrols(guildId, djsClient)
+        data: { content: "" }
     });
 }

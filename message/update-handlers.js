@@ -3,7 +3,6 @@
  * Centralized handlers for updating Discord messages
  */
 
-import { playbackcontrols } from '../ui/playback-controls.js';
 import { guildAudioSessions } from '../utils/core/audio-state.js';
 
 // Debounce mechanism to prevent rapid embed updates
@@ -62,8 +61,14 @@ async function performEmbedUpdate(guildId, djsClient, session = null) {
             return;
         }
         
-        // Generate the new content
-        const newContent = await playbackcontrols(guildId, djsClient);
+        // Message manager determines what screen to show based on state
+        const { StateCoordinator } = await import('../services/state-coordinator.js');
+        const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+        const stateType = trackedState?.currentState || 'idle';
+        
+        // Generate the new content using content generator
+        const { generatePlaybackControlsContent } = await import('./content-generators.js');
+        const newContent = await generatePlaybackControlsContent(guildId, djsClient, stateType, trackedState);
         
         // Get the channel and message
         const channel = await djsClient.channels.fetch(messageRef.channelId);

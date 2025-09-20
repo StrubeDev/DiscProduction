@@ -28,7 +28,7 @@ function extractVideoId(url) {
     return match ? match[1] : null;
 }
 
-function getYouTubeThumbnailUrl(videoId, quality = 'hqdefault') {
+function getYouTubeThumbnailUrl(videoId, quality = 'maxresdefault') {
     if (!videoId) return null;
     return `https://img.youtube.com/vi/${videoId}/${quality}.jpg`;
 }

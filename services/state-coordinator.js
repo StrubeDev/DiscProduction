@@ -27,11 +27,33 @@ export class StateCoordinator {
         this.clearEmbedUpdateQueue(guildId);
     }
 
+
     /**
      * Notify all listeners of a state change
      */
-    static async notifyStateChange(guildId, stateType, data) {
+    static async notifyStateChange(guildId, stateType, data, priority = 2, userId = null) {
+        // Import StateLockManager
+        const { StateLockManager } = await import('./state-lock-manager.js');
+        
+        // Check rate limiting
+        if (!await StateLockManager.rateLimitCheck(guildId, userId, stateType)) {
+            console.log(`[StateCoordinator] 🚫 Rate limit exceeded for guild ${guildId}`);
+            return;
+        }
+        
+        // Check if state change is allowed
+        if (!StateLockManager.isStateChangeAllowed(guildId, stateType, priority, userId)) {
+            console.log(`[StateCoordinator] 🚫 State change blocked: ${stateType} for guild ${guildId} (locked state)`);
+            
+            // Queue the request instead of blocking
+            StateLockManager.queueStateChange(guildId, stateType, priority, userId, data);
+            return;
+        }
+        
         console.log(`[StateCoordinator] 🔄 State change: ${stateType} for guild ${guildId}`);
+        
+        // Lock the new state
+        StateLockManager.lockState(guildId, stateType, priority, userId);
         
         // Update tracked state based on state type
         if (stateType === 'idle') {
@@ -220,18 +242,29 @@ export class StateCoordinator {
     /**
      * Set querying state (data-driven - triggered when modal is submitted)
      */
-    static async setQueryingState(guildId, queryData) {
+    static async setQueryingState(guildId, queryData, userId = null) {
         try {
             console.log(`[StateCoordinator] 🔍 setQueryingState called for guild ${guildId}, queryData:`, queryData);
+            
+            // Check if we should skip querying state if already playing
+            const currentState = this.getCurrentTrackedState(guildId);
+            if (currentState?.currentState === 'playing') {
+                console.log(`[StateCoordinator] 🚫 Skipping querying state - already playing, song will be queued`);
+                return;
+            }
             
             // Track the querying state
             this.trackState(guildId, 'querying', queryData);
 
-            // Notify state change
+            // Get user priority level
+            const { StateLockManager } = await import('./state-lock-manager.js');
+            const priority = StateLockManager.getUserPriority(userId, guildId);
+
+            // Notify state change with priority
             await this.notifyStateChange(guildId, 'querying', {
                 queryData,
                 timestamp: Date.now()
-            });
+            }, priority, userId);
 
             console.log(`[StateCoordinator] 🔄 querying state set for guild ${guildId}`);
         } catch (error) {
@@ -245,6 +278,12 @@ export class StateCoordinator {
     static async setLoadingState(guildId, songData) {
         try {
             console.log(`[StateCoordinator] 🔍 setLoadingState called for guild ${guildId}, songData:`, songData);
+            console.log(`[StateCoordinator] 🔍 SongData properties:`, {
+                title: songData?.title,
+                source: songData?.source,
+                isSpotify: songData?.isSpotify,
+                thumbnail: songData?.thumbnail
+            });
             
             // Track the loading state
             this.trackState(guildId, 'loading', songData);
@@ -275,6 +314,10 @@ export class StateCoordinator {
             await this.notifyStateChange(guildId, 'idle', {
                 timestamp: Date.now()
             });
+
+            // Unlock state when going to idle (allows new songs to start)
+            const { StateLockManager } = await import('./state-lock-manager.js');
+            StateLockManager.unlockState(guildId);
 
             console.log(`[StateCoordinator] 🔄 idle state set for guild ${guildId}`);
         } catch (error) {

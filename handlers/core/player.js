@@ -45,114 +45,36 @@ class Player {
         }
         
         try {
-            // Check if song is preloaded and ready for instant playback
-            const { preloader } = await import('../../utils/services/preloader.js');
-            console.log(`[Player] 🔍 DEBUG: Checking if song is ready - preloadCompleted: ${song.preloadCompleted}, processedAudioResource: ${!!song.processedAudioResource}, processedTempFile: ${!!song.processedTempFile}`);
+            // Check if song has stream details (from ImmediateProcessor or Preloader)
+            console.log(`[Player] 🔍 DEBUG: Checking if song is ready - hasStreamDetails: ${!!song.streamDetails}, preloadCompleted: ${song.preloadCompleted}, processedAudioResource: ${!!song.processedAudioResource}, processedTempFile: ${!!song.processedTempFile}`);
             
-            if (preloader.isSongReady(song)) {
-                console.log(`[Player] ⚡ Using preloaded song for instant playback: "${song.title}"`);
-                
-                // Get preloaded data from separate storage (not from song object)
-                const preloadedData = preloader.getPreloadedData(guildId, song.query);
-                if (preloadedData) {
-                    // Create stream details from preloaded data
-                    song.streamDetails = {
-                        audioResource: preloadedData.audioResource,
-                        tempFile: preloadedData.tempFile,
-                        metadata: preloadedData.metadata
-                    };
-                    
-                    console.log(`[Player] ✅ Using preloaded audio resource for instant playback`);
-                } else {
-                    throw new Error('Preloaded data not available');
-                }
-                
-                // For preloaded songs, still show loading sequence briefly for queue progression
-                // This ensures users see the transition from previous song to next song
-                try {
-                    // Use StateCoordinator instead of UnifiedLoadingService
-                    const { StateCoordinator } = await import('../../services/state-coordinator.js');
-                    const hasActiveLoading = StateCoordinator.hasActiveLoading(guildId);
-                    
-                    if (hasActiveLoading) {
-                        console.log(`[Player] ⚡ Loading sequence already active for queue progression, using preloaded song`);
-                        // Add a small delay to ensure loading screen is visible
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                    }
-                } catch (loadingError) {
-                    console.log(`[Player] Loading sequence check error:`, loadingError.message);
-                }
+            if (song.streamDetails) {
+                console.log(`[Player] ⚡ Using processed song for instant playback: "${song.title}"`);
+                console.log(`[Player] ✅ Stream details available for instant playback`);
             } else {
-                console.log(`[Player] 🔄 Song not preloaded, downloading now: "${song.title}"`);
+                // Check if song is preloaded (for queued songs)
+                const { preloader } = await import('../../utils/services/preloader.js');
                 
-                // Note: Loading sequence is handled by the unified media handler, not here
-                
-                // Get current volume from session
-                const currentVolume = session?.volume || 100;
-                
-                // Get audio stream using unified service
-                const { unifiedYtdlpService } = await import('../../utils/processors/unified-ytdlp-service.js');
-                
-                // Use the query directly - it should already be a YouTube URL from the unified media handler
-                let audioQuery = song.query;
-                
-                // Only search for YouTube equivalent if we don't already have a YouTube URL
-                if (song.spotifyData && (!song.query || (!song.query.includes('youtube.com') && !song.query.includes('youtu.be')))) {
-                    console.log(`[Player] 🔍 Spotify track detected, searching for YouTube equivalent: "${song.title}"`);
-                    try {
-                        const { searchSongOnYouTube } = await import('../../utils/services/song-search-service.js');
-                        const trackInfo = {
-                            title: song.title,
-                            artist: song.artist,
-                            duration: song.duration,
-                            thumbnailUrl: song.thumbnailUrl,
-                            spotifyData: song.spotifyData
+                if (preloader.isSongReady(song)) {
+                    console.log(`[Player] ⚡ Using preloaded song for instant playback: "${song.title}"`);
+                    
+                    // Get preloaded data from separate storage (not from song object)
+                    const preloadedData = preloader.getPreloadedData(guildId, song.query);
+                    if (preloadedData) {
+                        // Create stream details from preloaded data
+                        song.streamDetails = {
+                            audioResource: preloadedData.audioResource,
+                            tempFile: preloadedData.tempFile,
+                            metadata: preloadedData.metadata
                         };
                         
-                        const { youtubeUrl, searchQuery, error: searchError } = await searchSongOnYouTube(trackInfo, guildId);
-                        
-                        if (searchError || !youtubeUrl) {
-                            throw new Error(`Failed to find YouTube equivalent: ${searchError || 'No YouTube URL found'}`);
-                        }
-                        
-                        audioQuery = youtubeUrl;
-                        console.log(`[Player] ✅ Found YouTube equivalent: ${youtubeUrl}`);
-                    } catch (searchError) {
-                        console.error(`[Player] ❌ Failed to search for YouTube equivalent:`, searchError.message);
-                        throw new Error(`Failed to find YouTube equivalent for Spotify track: ${searchError.message}`);
+                        console.log(`[Player] ✅ Using preloaded audio resource for instant playback`);
+                    } else {
+                        throw new Error('Preloaded data not available');
                     }
-                } else if (song.spotifyData) {
-                    console.log(`[Player] ✅ Using pre-resolved YouTube URL for Spotify track: ${audioQuery}`);
-                }
-                
-                try {
-                    const streamData = await unifiedYtdlpService.getAudioStream(
-                        audioQuery, 
-                        guildId, 
-                        currentVolume,
-                        {
-                            preloadedTempFile: song.preloadedTempFile,
-                            preloadCompleted: song.preloadCompleted,
-                            preloadedMetadata: song.preloadedMetadata
-                        },
-                        song // Pass the song object to preserve duration from Spotify API
-                    );
-                    
-                    console.log(`[Player] ✅ Audio stream data received:`, {
-                        hasAudioResource: !!streamData.audioResource,
-                        hasTempFile: !!streamData.tempFile,
-                        metadata: streamData.metadata?.title || 'Unknown'
-                    });
-                    
-                    // Update song object with stream details
-                    song.streamDetails = {
-                        audioResource: streamData.audioResource,
-                        tempFile: streamData.tempFile,
-                        metadata: streamData.metadata
-                    };
-                } catch (streamError) {
-                    console.error(`[Player] ❌ Failed to get audio stream for "${song.title}":`, streamError.message);
-                    throw streamError;
+                } else {
+                    console.log(`[Player] ❌ Song not processed and not preloaded: "${song.title}"`);
+                    throw new Error('Song must be processed by ImmediateProcessor or preloaded before playback');
                 }
             }
             
@@ -168,14 +90,20 @@ class Player {
             console.log(`[Player] 🔍 DEBUG: Player state before play: ${session.player.state.status}`);
             console.log(`[Player] 🔍 DEBUG: Audio resource type: ${audioResource.constructor.name}`);
             
-            // Note: Loading sequence is now handled by the centralized loading sequence handler
-            // This ensures consistent loading sequence across all song types
+            // Note: Loading sequence is handled by ImmediateProcessor or Preloader
+            // Player only handles audio playback
             
             session.player.play(audioResource);
             console.log(`[Player] 🔍 DEBUG: Player state after play: ${session.player.state.status}`);
             
             // Track playing song
             this.playingSongs.set(guildId, song);
+            
+            // Add source information to song object for UI display
+            if (!song.source && !song.isSpotify) {
+                song.source = song.spotifyData ? 'spotify' : 'youtube';
+                song.isSpotify = !!song.spotifyData;
+            }
             
             // Set as now playing in state manager
             playerStateManager.setNowPlaying(guildId, song);
@@ -365,12 +293,8 @@ class Player {
                 console.log(`[Player] ✅ Manually set Discord status to idle for guild ${guildId}`);
             }
             
-            // REMOVE FINISHED SONG: Remove the finished song from queue (keep remaining songs)
-            if (session && session.queue && session.queue.length > 0) {
-                const finishedSong = session.queue.shift(); // Remove first song (the one that finished)
-                console.log(`[Player] ✅ Removed finished song from queue: "${finishedSong?.title || 'Unknown'}"`);
-                console.log(`[Player] 📋 Queue now has ${session.queue.length} song(s) remaining`);
-            }
+            // Don't clear queue here - queue only gets cleared when adding songs to idle player
+            // The queue should persist until a new song is added while idle
             
             // TRIGGER IDLE STATE: Set idle state when song finishes
             try {

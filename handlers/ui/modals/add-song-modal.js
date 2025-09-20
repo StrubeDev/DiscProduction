@@ -74,8 +74,8 @@ export async function handleSubmitAddSongModal(req, res, data, djsClient) {
     const channelId = req.body.channel_id;
     
     console.log(`[AddSongModal] handleSubmitAddSongModal called for guild ${guildId}, user ${userId}`);
-    console.log(`[AddSongModal] Modal data:`, JSON.stringify(data, null, 2));
-    console.log(`[AddSongModal] Request body:`, JSON.stringify(req.body, null, 2));
+    // console.log(`[AddSongModal] Modal data:`, JSON.stringify(data, null, 2));
+    // console.log(`[AddSongModal] Request body:`, JSON.stringify(req.body, null, 2));
     
     try {
         // Extract the song query from modal data

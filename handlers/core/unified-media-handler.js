@@ -59,29 +59,44 @@ export class UnifiedMediaHandler {
 
             console.log(`[UnifiedMediaHandler] ✅ Processed media: "${songObject.title}"`);
 
-            // STEP 3: Show loading state with metadata (data-driven - triggered when ytdlp gets song object)
+            // STEP 3: Check for active processes BEFORE setting any state
             try {
                 const { StateCoordinator } = await import('../../services/state-coordinator.js');
-                const songMetadata = {
-                    title: songObject.title,
-                    artist: songObject.artist || 'Unknown Artist',
-                    duration: songObject.duration || 'Unknown Duration',
-                    thumbnail: songObject.thumbnailUrl,
-                    addedBy: songObject.addedBy || 'Unknown User'
-                };
+                const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+                const isQuerying = trackedState?.currentState === 'querying';
+                const isLoading = trackedState?.currentState === 'loading';
+                const isPlaying = trackedState?.currentState === 'playing';
                 
-                // Use StateCoordinator to set loading state with metadata
-                await StateCoordinator.setLoadingState(guildId, songMetadata);
+                console.log(`[UnifiedMediaHandler] 🔍 Pre-loading state check:`, {
+                    currentState: trackedState?.currentState,
+                    isQuerying,
+                    isLoading,
+                    isPlaying,
+                    songTitle: songObject.title
+                });
                 
-                console.log(`[UnifiedMediaHandler] ✅ Yellow loading state shown for: "${songObject.title}"`);
+            // Don't clear querying state - let it transition to loading when playback starts
+            console.log(`[UnifiedMediaHandler] ✅ Song processed, delegating to queue manager for: "${songObject.title}"`);
             } catch (e) {
-                console.log('[UnifiedMediaHandler] Unable to show loading state:', e.message);
+                console.log('[UnifiedMediaHandler] Unable to check/set loading state:', e.message);
             }
 
-            // STEP 4: Clear querying and set loading true while enqueue/prepare
+            // STEP 4: Clear querying and set loading true while enqueue/prepare (only if no active process)
             try {
-                const { playerStateManager } = await import('../../utils/core/player-state-manager.js');
-                playerStateManager.updateState(guildId, { isQuerying: false, isStarting: true });
+                const { StateCoordinator } = await import('../../services/state-coordinator.js');
+                const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+                const isQuerying = trackedState?.currentState === 'querying';
+                const isLoading = trackedState?.currentState === 'loading';
+                const isPlaying = trackedState?.currentState === 'playing';
+                const hasActiveProcess = isQuerying || isLoading || isPlaying;
+                
+                if (!hasActiveProcess) {
+                    const { playerStateManager } = await import('../../utils/core/player-state-manager.js');
+                    playerStateManager.updateState(guildId, { isQuerying: false, isStarting: true });
+                    console.log(`[UnifiedMediaHandler] ✅ Player state updated for: "${songObject.title}"`);
+                } else {
+                    console.log(`[UnifiedMediaHandler] 🚫 Skipping player state update for: "${songObject.title}" (active process detected)`);
+                }
             } catch (e) {
                 console.log('[UnifiedMediaHandler] Unable to set loading state:', e.message);
             }
@@ -156,7 +171,7 @@ export class UnifiedMediaHandler {
             title: trackDetails.title,
             artist: trackDetails.artist,
             duration: trackDetails.duration,
-            thumbnailUrl: trackDetails.albumArtUrl || trackDetails.artistImageUrl,
+            imageUrl: trackDetails.albumArtUrl || trackDetails.artistImageUrl,
             spotifyData: trackDetails
         };
 
@@ -186,7 +201,7 @@ export class UnifiedMediaHandler {
             addedBy: interactionDetails?.user?.username || 'Unknown User',
             addedById: interactionDetails?.user?.id || 'unknown',
             addedByAvatar: interactionDetails?.user?.avatar || null,
-            thumbnailUrl: streamData.metadata.thumbnailUrl,
+            imageUrl: streamData.metadata.thumbnailUrl,
             youtubeUrl: youtubeUrl,
             streamDetails: {
                 audioResource: streamData.audioResource,
@@ -219,6 +234,9 @@ export class UnifiedMediaHandler {
         
         console.log(`[UnifiedMediaHandler] 📋 Enqueuing via queue manager (single-path)`);
         
+        // Let QueueManager handle the playback decision - don't make it here
+        console.log(`[UnifiedMediaHandler] 🔍 Delegating playback decision to QueueManager`);
+        
         const { queueManager } = await import('../../utils/services/queue-manager.js');
         await queueManager.addSongsToQueue(
             guildId, 
@@ -229,7 +247,7 @@ export class UnifiedMediaHandler {
                 shouldPreload: true,
                 preloadOnlyNext: true,
                 emitQueueChanged: true,
-                startPlayback: true, // Allow queue manager to auto-start when idle
+                startPlayback: true, // Let QueueManager decide based on state
                 interactionDetails: interactionDetails,
                 displayPref: displayPref
             }

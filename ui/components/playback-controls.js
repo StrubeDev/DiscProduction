@@ -10,6 +10,7 @@ import {
 } from 'discord-interactions';
 import { getVoiceConnection, VoiceConnectionStatus, AudioPlayerStatus } from '@discordjs/voice';
 import { guildAudioSessions } from '../../utils/core/audio-state.js';
+import { playerStateManager } from '../../utils/core/player-state-manager.js';
 
 // Helper function to format duration from seconds to MM:SS format
 function formatDuration(seconds) {
@@ -42,11 +43,19 @@ export async function playbackcontrols(guildId, djsClient) {
     const isPlaying = playerStateManager.isPlaying(guildId);
     const isPaused = playerStateManager.isPaused(guildId);
     const isBuffering = playerStateManager.isBuffering(guildId);
+    const isStarting = playerStateManager.isStarting(guildId);
     const hasActiveAudio = isPlaying || isPaused;
     
-    let musicDisplay = "Nothing is currently playing.";
+    let musicDisplay = "Ready to play music! Use `/play <song name/URL>` to get started.";
     let thumbnailUrl = null;
     let userProfileUrl = null;
+    
+    // Check for loading/querying states first
+    if (isStarting || session?.isStarting) {
+        musicDisplay = "🔄 **Loading...**";
+    } else if (isBuffering) {
+        musicDisplay = "⏳ **Buffering...**";
+    }
     
     // Get volume level (default to 100% if not set)
     const volumeLevel = session?.volume || 100;
@@ -98,7 +107,7 @@ export async function playbackcontrols(guildId, djsClient) {
 
     // Set embed color based on state
     let embedColor = 0x506098; // Default blue
-    if (session?.isStarting || isBuffering) {
+    if (isStarting || isBuffering || session?.isStarting) {
         embedColor = 0xFFA500; // Orange for loading states
     } else if (isPlaying) {
         embedColor = 0x00FF00; // Green for playing
@@ -120,11 +129,12 @@ export async function playbackcontrols(guildId, djsClient) {
                 {
                     name: '',
                     value: (() => {
-                        if (uiState.shouldShowLoading()) {
-                            return uiState.getLoadingIndicator();
+                        if (isStarting || isBuffering || session?.isStarting) {
+                            const duration = session?.nowPlaying?.duration;
+                            return duration ? `⏳ \`${formatDuration(duration)}\`` : '⏳ **Loading...**';
                         }
                         
-                        const duration = session?.nowPlaying?.streamDetails?.metadata?.duration;
+                        const duration = session?.nowPlaying?.duration;
                         const currentTime = session?.startTime ? Math.floor((Date.now() - session.startTime) / 1000) : 0;
                         const statusEmoji = isPaused ? '▶' : '⏸';
                         
@@ -145,8 +155,8 @@ export async function playbackcontrols(guildId, djsClient) {
                 // Volume display
                 {
                     name: (() => {
-                        if (uiState.shouldShowLoading()) {
-                            return uiState.getLoadingIndicator();
+                        if (isStarting || isBuffering || session?.isStarting) {
+                            return '⏳ **Loading...**';
                         }
                         return isMuted ? '🔇 **MUTED**' : `\`${volumeLevel}%\` ${volumeBar}`;
                     })(),
@@ -208,4 +218,67 @@ export async function playbackcontrols(guildId, djsClient) {
     };
     
     return displayResult;
+}
+
+/**
+ * Get playback control buttons for a specific state
+ * @param {string} guildId - The guild ID
+ * @param {Object} djsClient - Discord.js client
+ * @param {string} stateType - The current state type
+ * @returns {Array} Discord button components
+ */
+export async function getPlaybackControlButtons(guildId, djsClient, stateType) {
+    const session = guildAudioSessions.get(guildId);
+    const isPlaying = playerStateManager.isPlaying(guildId);
+    const isPaused = playerStateManager.isPaused(guildId);
+    const isStarting = playerStateManager.isStarting(guildId);
+    const isBuffering = playerStateManager.isBuffering(guildId);
+    const hasActiveAudio = isPlaying || isPaused;
+    
+    return [
+        {
+            type: 1, // ACTION_ROW
+            components: [
+                {
+                    type: 2, // BUTTON
+                    custom_id: 'open_add_song_modal',
+                    label: 'Add Song',
+                    style: 2, // SECONDARY
+                },
+                {
+                    type: 2, // BUTTON
+                    custom_id: 'remote_play_pause',
+                    label: isPaused ? 'Play' : 'Pause',
+                    style: isPaused ? 3 : 2, // SUCCESS for Play, SECONDARY for Pause
+                },
+                {
+                    type: 2, // BUTTON
+                    custom_id: 'remote_skip',
+                    label: 'Skip',
+                    style: 2, // SECONDARY
+                },
+                {
+                    type: 2, // BUTTON
+                    custom_id: 'remote_stop',
+                    label: 'Stop',
+                    style: 2, // SECONDARY
+                },
+                {
+                    type: 2, // BUTTON
+                    custom_id: 'remote_shuffle',
+                    label: 'Shuffle',
+                    style: 2, // SECONDARY
+                },
+            ],
+        },
+        {
+            type: 1, // ACTION_ROW
+            components: [{
+                type: 2, // BUTTON
+                custom_id: 'menu_nav_main',
+                style: 2, // SECONDARY
+                label: 'Back',
+            }],
+        },
+    ];
 }

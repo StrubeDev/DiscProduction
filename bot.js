@@ -225,7 +225,8 @@ function setupAudioPlayerListeners(djsClient) {
                     // State-driven: clear loading via StateCoordinator
                     try {
                         const { StateCoordinator } = await import('./services/state-coordinator.js');
-                        await StateCoordinator.setLoadingState(guildId, false, { title: session.nowPlaying.title });
+                        // Clear loading state by setting it to idle
+                        await StateCoordinator.setIdleState(guildId);
                     } catch (e) {
                         console.log(`[AudioPlayer] State loading clear error:`, e.message);
                     }
@@ -242,15 +243,9 @@ function setupAudioPlayerListeners(djsClient) {
                         const guild = await djsClient.guilds.fetch(guildId);
                         const textChannel = await guild.channels.fetch(channelId);
                         
-                        // Generate playback controls embed
-                        const { playbackcontrols } = await import('./ui/components/playback-controls.js');
-                        const playbackData = await playbackcontrols(guildId, djsClient);
-                        
-                        // Send the message
-                        const message = await textChannel.send(playbackData);
-                        
-                        // Store the message reference in the session
-                        MessageReferenceManager.storeMessageRef(guildId, MESSAGE_TYPES.PLAYBACK_CONTROLS, message.id, message.channel.id);
+                        // Use new message system
+                        const { updatePlaybackControlsEmbed } = await import('./message/update-handlers.js');
+                        await updatePlaybackControlsEmbed(guildId, djsClient);
                         
                         console.log(`[AudioPlayer] ✅ Sent and stored initial playback controls message for guild ${guildId}`);
                     } else {
@@ -319,43 +314,24 @@ function setupAudioPlayerListeners(djsClient) {
             if (session.queue && session.queue.length > 0) {
                 const nextSong = session.queue[0];
                 
+                // CRITICAL: Check StateCoordinator for querying/loading states
+                const { StateCoordinator } = await import('./services/state-coordinator.js');
+                const trackedState = StateCoordinator.getCurrentTrackedState(guildId);
+                const isQuerying = trackedState?.currentState === 'querying';
+                const isLoading = trackedState?.currentState === 'loading';
+                
                 // IMPROVED CHECK: Should we start playback immediately?
                 // Only start playback if:
                 // 1. No song is currently playing (nowPlaying is null)
                 // 2. Player is not currently playing (isPlaying is false)
                 // 3. We're not already starting a song (isStarting is false)
-                // 4. The next song is preloaded and ready for instant playback
+                // 4. NOT currently querying or loading another song
                 let shouldStartPlayback = !session.nowPlaying && 
                                          !session.isPlaying && 
-                                         !session.isStarting;
+                                         !session.isStarting &&
+                                         !isQuerying &&
+                                         !isLoading;
                 
-                // FALLBACK: If session state seems stuck (has nowPlaying but player is idle), force reset
-                if (!shouldStartPlayback && session.nowPlaying && !session.isPlaying && !session.isStarting) {
-                    console.log(`[AudioPlayer] ⚠️ FALLBACK: Session state appears stuck - nowPlaying exists but not playing`);
-                    console.log(`[AudioPlayer] 🔄 FORCING STATE RESET for guild ${guildId}`);
-                    
-                    // Force reset the session state
-                    const { playerStateManager } = await import('./utils/core/player-state-manager.js');
-                    playerStateManager.clearNowPlaying(guildId);
-                    
-                    const state = playerStateManager.getState(guildId);
-                    if (state) {
-                        state.discordStatus = 'idle';
-                        state.isPlaying = false;
-                        state.isPaused = false;
-                        state.isStarting = false;
-                        state.isBuffering = false;
-                        state.hasNowPlaying = false;
-                        console.log(`[AudioPlayer] ✅ Forced session state reset completed`);
-                    }
-                    
-                    // Now check again
-                    shouldStartPlayback = !session.nowPlaying && 
-                                         !session.isPlaying && 
-                                         !session.isStarting;
-                    
-                    console.log(`[AudioPlayer] 🔍 After forced reset - shouldStartPlayback: ${shouldStartPlayback}`);
-                }
                 
                 console.log(`[AudioPlayer] 🔍 Queue change playback check:`, {
                     hasNextSong: !!nextSong,
@@ -364,6 +340,8 @@ function setupAudioPlayerListeners(djsClient) {
                     nowPlayingTitle: session.nowPlaying?.title || 'None',
                     isPlaying: session.isPlaying,
                     isStarting: session.isStarting,
+                    isQuerying,
+                    isLoading,
                     shouldStartPlayback,
                     queueLength: session.queue?.length || 0
                 });
@@ -371,49 +349,9 @@ function setupAudioPlayerListeners(djsClient) {
                 if (shouldStartPlayback) {
                     console.log(`[AudioPlayer] 🎵 STARTING PLAYBACK: No song currently playing, starting next song: "${nextSong.title}"`);
                     
-                    // IMPORTANT: Shift the song from queue BEFORE starting playback
-                    // This prevents the same song from being processed multiple times
-                    const songToPlay = session.queue.shift();
-                    console.log(`[AudioPlayer] 🗑️ Removed song from queue: "${songToPlay.title}"`);
-                    
-                    try {
-                        const { player } = await import('./handlers/core/player.js');
-                        const { preloader } = await import('./utils/services/preloader.js');
-                        
-                        // Check if song is preloaded and ready FIRST
-                        if (preloader.isSongReady(songToPlay)) {
-                            console.log(`[AudioPlayer] ⚡ Using preloaded song for instant playback: "${songToPlay.title}"`);
-                            // No explicit loading here; querying/loading handled in unified handler
-                            
-                            // Create minimal interaction details for queue progression
-                            const queueInteractionDetails = {
-                                user: { username: songToPlay.addedBy || 'Unknown User' },
-                                applicationId: 'queue-progression',
-                                interactionToken: 'queue-progression'
-                            };
-                            await player.playSong(guildId, songToPlay, djsClient, session, queueInteractionDetails, null);
-                        } else {
-                            console.log(`[AudioPlayer] 🔄 Song not preloaded, starting preload and playback: "${songToPlay.title}"`);
-                            // No explicit loading here; querying/loading handled in unified handler
-                            
-                            // Start preloading and then play
-                            await preloader.startPreloadForSong(songToPlay, guildId);
-                            // Wait a moment for preload to complete
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            const queueInteractionDetails = {
-                                user: { username: songToPlay.addedBy || 'Unknown User' },
-                                applicationId: 'queue-progression',
-                                interactionToken: 'queue-progression'
-                            };
-                            await player.playSong(guildId, songToPlay, djsClient, session, queueInteractionDetails, null);
-                        }
-                        console.log(`[AudioPlayer] ✅ Playback started successfully`);
-                    } catch (playbackError) {
-                        console.error(`[AudioPlayer] ❌ PLAYBACK FAILED:`, playbackError.message);
-                        // If playback failed, put the song back in the queue
-                        session.queue.unshift(songToPlay);
-                        console.log(`[AudioPlayer] 🔄 Put song back in queue after playback failure: "${songToPlay.title}"`);
-                    }
+                    // Let QueueManager handle auto-advance with proper processing
+                    const { queueManager } = await import('./utils/services/queue-manager.js');
+                    await queueManager.handleAutoAdvance(guildId);
                 } else {
                     // PRELOAD: Only preload if we're already playing
                     const shouldPreload = nextSong && 

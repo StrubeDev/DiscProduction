@@ -1,6 +1,3 @@
-# Jamly Discord Bot - Docker Compose Setup
-version: '3.8'
-
 services:
   disc-music:
     build: .
@@ -8,41 +5,33 @@ services:
     restart: unless-stopped
     depends_on:
       - postgres
-    
-    # Environment variables
     environment:
       - NODE_ENV=production
       - TZ=UTC
-      # Map your .env variables correctly
       - DISCORD_TOKEN=${BOT_TOKEN}
       - DISCORD_CLIENT_ID=${APP_ID}
-      # PostgreSQL connection to existing container
       - POSTGRES_HOST=disc-music-db
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password
-    
-    # Connect to shared network with PostgreSQL
     networks:
       - jamly-network
-    
-    # Mount env file (create .env with your Discord token)
     env_file:
       - .env
-    
-    # Expose port for Discord interactions
     ports:
-      - "3000:3000"
-    
-    # Volumes for persistent data
+      - "127.0.0.1:3000:3000"
     volumes:
-      - ./logs:/app/logs
-      - ./temp:/app/temp
-      - ./cookies.txt:/app/cookies.txt
-      - ./database.db:/app/database.db
-    
-    # Resource limits (adjust as needed)
+      - logs_data:/app/logs
+      - temp_data:/app/temp
+      - cookies_data:/app/cookies
+      - db_data:/app/data/db
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     deploy:
       resources:
         limits:
@@ -51,15 +40,12 @@ services:
         reservations:
           memory: 2G
           cpus: '0.5'
-    
-    # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  # Database service
   postgres:
     image: postgres:15-alpine
     container_name: disc-music-db
@@ -73,8 +59,31 @@ services:
     networks:
       - jamly-network
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: disc-music-ngrok
+    restart: unless-stopped
+    depends_on:
+      - disc-music
+    user: "1001:1001"
+    ports:
+      - "127.0.0.1:4040:4040"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_TOKEN}
+    command: ["http", "disc-music:3000", "--log=stdout"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - jamly-network
+
 volumes:
   postgres_data:
+  logs_data:
+  temp_data:
+  cookies_data:
+  db_data:
 
 networks:
   jamly-network:

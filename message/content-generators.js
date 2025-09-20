@@ -3,19 +3,59 @@
  * Centralized content generation for different message types
  */
 
-import { playbackcontrols } from '../../ui/playback-controls.js';
-import { formatQueueMessagePayload } from '../../utils/helpers/message-helpers.js';
-import { guildAudioSessions } from '../../utils/core/audio-state.js';
+import { formatQueueMessagePayload } from '../utils/helpers/message-helpers.js';
+import { guildAudioSessions } from '../utils/core/audio-state.js';
 
 /**
  * Generate playback controls content
  * @param {string} guildId - Guild ID
  * @param {Object} djsClient - Discord.js client
+ * @param {string} stateType - The state type to generate content for
+ * @param {Object} trackedState - StateCoordinator tracked state
  * @returns {Object} Discord message data
  */
-export async function generatePlaybackControlsContent(guildId, djsClient) {
-    return await playbackcontrols(guildId, djsClient);
+export async function generatePlaybackControlsContent(guildId, djsClient, stateType, trackedState) {
+    // Get embed content from the appropriate page
+    let pageData;
+    if (stateType === 'loading') {
+        const { handleLoadingPage } = await import('./loading-page.js');
+        pageData = await handleLoadingPage(guildId, djsClient, trackedState);
+    } else if (stateType === 'playing') {
+        const { handlePlayingPage } = await import('./playing-page.js');
+        pageData = await handlePlayingPage(guildId, djsClient, trackedState);
+    } else if (stateType === 'querying') {
+        const { handleQueryingPage } = await import('./querying-page.js');
+        pageData = await handleQueryingPage(guildId, djsClient, trackedState);
+    } else if (stateType === 'paused') {
+        // Use playing page for paused state (same content, different color)
+        const { handlePlayingPage } = await import('./playing-page.js');
+        pageData = await handlePlayingPage(guildId, djsClient, trackedState);
+    } else {
+        // Check if bot is connected to voice channel
+        const { getVoiceConnection, VoiceConnectionStatus } = await import('@discordjs/voice');
+        const connection = getVoiceConnection(guildId);
+        const isConnected = connection && connection.state.status !== VoiceConnectionStatus.Destroyed;
+        
+        if (isConnected) {
+            const { handleIdlePage } = await import('./idle-page.js');
+            pageData = await handleIdlePage(guildId, djsClient, trackedState);
+        } else {
+            const { handleDefaultPage } = await import('./default-page.js');
+            pageData = await handleDefaultPage(guildId, djsClient, trackedState);
+        }
+    }
+    
+    // Get button components from playback controls component
+    const { getPlaybackControlButtons } = await import('../ui/components/playback-controls.js');
+    const buttonComponents = await getPlaybackControlButtons(guildId, djsClient, stateType);
+    
+    // Combine page embed with button components
+    return {
+        embeds: pageData.embeds,
+        components: buttonComponents
+    };
 }
+
 
 /**
  * Generate queue message content
